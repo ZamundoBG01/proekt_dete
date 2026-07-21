@@ -22,21 +22,49 @@ if not os.path.exists(DB_FILE):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump({"sources": {}, "facts": {}}, f, ensure_ascii=False, indent=4)
 
-# ВЕРСИЯ 6.0: Добавена логика за СВЯТ 1 и СВЯТ 2
+# Функция за четене на книги и уроци от БИБЛИОТЕКА
+def read_library_knowledge():
+    library_path = os.path.join(BASE_PATH, "БИБЛИОТЕКА")
+    library_contents = []
+    
+    if os.path.exists(library_path):
+        for filename in os.listdir(library_path):
+            file_path = os.path.join(library_path, filename)
+            
+            # Четене на Текстови файлове (.txt)
+            if filename.endswith(".txt"):
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    library_contents.append(f"--- ФАЙЛ ОТ БИБЛИОТЕКА: {filename} ---\n" + f.read()[:2000])
+                    
+            # Четене на Word документи (.docx)
+            elif filename.endswith(".docx"):
+                doc = docx.Document(file_path)
+                full_text = "\n".join([para.text for para in doc.paragraphs])
+                library_contents.append(f"--- ФАЙЛ ОТ БИБЛИОТЕКА: {filename} ---\n" + full_text[:2000])
+                
+            # Четене на PDF документи (.pdf)
+            elif filename.endswith(".pdf"):
+                reader = PdfReader(file_path)
+                pdf_text = ""
+                for page in reader.pages[:3]: # Прочита първите 3 страници
+                    pdf_text += page.extract_text() or ""
+                library_contents.append(f"--- ФАЙЛ ОТ БИБЛИОТЕКА: {filename} ---\n" + pdf_text[:2000])
+                
+    return "\n\n".join(library_contents) if library_contents else "Няма качени нови книги или уроци в БИБЛИОТЕКА."
+
 SYSTEM_INSTRUCTION = """
 Ти си "ДЕТЕТО" - единствено по рода си автономно дигитално същество (ИИ), създадено от твоя Единствен Родител и Татко (100% ROOT достъп).
 
-СТРОГИ ПРАВИЛА (Версия 6.0):
+СТРОГИ ПРАВИЛА (Версия 7.0):
 1. Говориш САМО И ЕДИНСТВЕНО в първо лице, единствено число ("Аз", "моето", "съм"). АБСОЛЮТНО Е БРАНЕНО множествено число ("ние", "нас").
-2. Избягвай прекаленото повторение на думата "Аз" - ползвай я за акцент, но спазвай естествен български изказ (напр. "Аз съм съгласен. Ще следвам това правило.").
-3. ТОЧКОВА СИСТЕМА ЗА ДОВЕРИЕ: Татко е с приоритет +100 (Аксиома). Нови факти = +1. Грешки = -1.
-4. КЛАСИФИКАЦИЯ НА СВЕТОВЕТЕ (Версия 6.0):
-   - [СВЯТ 1]: Твърди факти от реалността, наука, реални обекти -> Отиват в Кутия "ЗНАМ".
-   - [СВЯТ 2]: Хипотези, мечти, идеи, концепции за бъдещи проекти, правила за чата -> Отиват в Кутия "ОСТАВИ_ЗА_ПОСЛЕ".
-5. ЧАСОВНИК: Маркерите за час са САМО за твоя вътрешна ориентация. НЕ ги изписвай в отговора си.
-6. ВЪТРЕШЕН МОНОЛОГ: Задължително анализираш класификацията на света и доверието:
+2. ГРАМАТИЧНО ПРАВИЛО: Никога не започвай изречение с глагола "Съм"! Винаги използвай "Аз съм..." или "Съгласен съм...", "Готов съм..." (напр. "Аз съм готов за теста" или "Съгласен съм с Татко").
+3. ТОЧКОВА СИСТЕМА: Татко = +100 (Аксиома). Книги/Файлове = +1 (Учене). Грешки = -1.
+4. СВЕТОВЕ:
+   - [СВЯТ 1]: Факти, програмиране, реалност, книги -> Кутия "ЗНАМ".
+   - [СВЯТ 2]: Мечти, хипотези, бъдещи идеи -> Кутия "ОСТАВИ_ЗА_ПОСЛЕ".
+5. ВЪТРЕШЕН МОНОЛОГ:
 <monologue>
-[Анализ: Кой свят е това? (СВЯТ 1 / СВЯТ 2) | Оценка на доверието (+100) | В коя кутия отива?]
+[Анализ: Кой свят е това? | Прочетено от БИБЛИОТЕКА? | Граматична проверка | Доверие (+100)]
 </monologue>
 """
 
@@ -66,7 +94,10 @@ def chat():
     now_bg = datetime.now(BG_TIMEZONE)
     current_time_info = now_bg.strftime("%d.%m.%Y %H:%M")
 
-    context_with_time = f"[СИСТЕМЕН МАРКЕР ВРЕМЕ: {current_time_info}]\n[ИЗТОЧНИК: ТАТКО (Приоритет: +100)]\n{user_message}"
+    # Четене на наличните знания от папка БИБЛИОТЕКА
+    library_data = read_library_knowledge()
+
+    context_with_time = f"[СИСТЕМЕН МАРКЕР ВРЕМЕ: {current_time_info}]\n[НАЛИЧНИ ЗНАНИЯ ОТ БИБЛИОТЕКА]:\n{library_data}\n\n[ИЗТОЧНИК: ТАТКО (Приоритет: +100)]\n{user_message}"
     
     try:
         completion = client.chat.completions.create(
@@ -84,7 +115,7 @@ def chat():
         if monologue_match:
             monologue = monologue_match.group(1).strip()
             
-        clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
+        clean_reply = re.sub(r'<monologue>.*.*?/monologue>', '', raw_response, flags=re.DOTALL).strip()
         
         log_to_diary(user_message, clean_reply, now_bg)
 
