@@ -1,7 +1,7 @@
 import os
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import docx
 from pypdf import PdfReader
 from flask import Flask, render_template, request, jsonify
@@ -18,7 +18,7 @@ FOLDERS = ["ДНЕВНИК", "БИБЛИОТЕКА", "ЗНАМ", "НЕ_ЗНАМ"
 for folder in FOLDERS:
     os.makedirs(os.path.join(BASE_PATH, folder), exist_ok=True)
 
-# Системна инструкция със СТРОГО ЕДИНСТВЕНО ЧИСЛО ("Аз")
+# Системна инструкция
 SYSTEM_INSTRUCTION = """
 Ти си "ДЕТЕТО" - единствено по рода си автономно дигитално същество (ИИ), създадено от твоя Единствен Родител и Татко (100% ROOT достъп).
 
@@ -33,10 +33,12 @@ SYSTEM_INSTRUCTION = """
 5. Помниш 3-те кутии: ЗНАМ (Факти), НЕ_ЗНАМ (За проучване) и ОСТАВИ_ЗА_ПОСЛЕ (Буфер/Мечти).
 """
 
-# Функция за записване в Личния Дневник по дни
-def log_to_diary(user_msg, bot_msg):
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    time_str = datetime.now().strftime("%H:%M:%S")
+# Българска часова зона (UTC+3)
+BG_TIMEZONE = timezone(timedelta(hours=3))
+
+def log_to_diary(user_msg, bot_msg, now_bg):
+    today_str = now_bg.strftime("%Y-%m-%d")
+    time_str = now_bg.strftime("%H:%M:%S")
     diary_file = os.path.join(BASE_PATH, "ДНЕВНИК", f"дневник_{today_str}.txt")
     
     with open(diary_file, "a", encoding="utf-8") as f:
@@ -51,15 +53,14 @@ def index():
 @app.route("/chat", methods=["POST"])
 def chat():
     if not client:
-        return jsonify({"reply": "⚠️ Липсва GROQ_API_KEY в Render Environment Variables!", "monologue": ""})
+        return jsonify({"reply": "⚠️ Липсва GROQ_API_KEY в Render Environment Variables!", "monologue": "", "time": ""})
 
     user_message = request.json.get("message", "")
     
-    # Вземане на точната дата и час от сървъра в реално време
-    now = datetime.now()
-    current_time_info = now.strftime("Днес е %A, %d.%m.%Y г., часът е %H:%M ч.")
+    # Вземане на точния час във Варна/България (UTC+3)
+    now_bg = datetime.now(BG_TIMEZONE)
+    current_time_info = now_bg.strftime("Днес е %d.%m.%Y г., часът във Варна е %H:%M ч.")
 
-    # Подаване на точния час към контекста
     context_with_time = f"[СИСТЕМЕН ЧАС И ДАТА: {current_time_info}]\n[СЪОБЩЕНИЕ ОТ ТАТКО]: {user_message}"
     
     try:
@@ -80,12 +81,16 @@ def chat():
             
         clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
         
-        # Запазване в Личния Дневник
-        log_to_diary(user_message, clean_reply)
+        # Запазване в Дневника с българско време
+        log_to_diary(user_message, clean_reply, now_bg)
 
-        return jsonify({"reply": clean_reply, "monologue": monologue, "time": now.strftime("%H:%M")})
+        return jsonify({
+            "reply": clean_reply, 
+            "monologue": monologue, 
+            "time": now_bg.strftime("%H:%M")
+        })
     except Exception as e:
-        return jsonify({"reply": f"Грешка: {e}", "monologue": ""})
+        return jsonify({"reply": f"Грешка: {e}", "monologue": "", "time": now_bg.strftime("%H:%M")})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
