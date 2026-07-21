@@ -1,91 +1,152 @@
 import os
 import json
 import re
-from datetime import datetime
-from flask import Flask, render_template, request, jsonify
+import docx
+from pypdf import PdfReader
+from flask import Flask, render_template_string, request, jsonify
+from groq import Groq
 
 app = Flask(__name__)
 
-# Папки за паметта (локално на сървъра)
-BASE_PATH = './ДЕТЕТО_ПАМЕТ'
-PATH_DIARY = os.path.join(BASE_PATH, 'ДНЕВНИК')
-PATH_PROJECTS = os.path.join(BASE_PATH, 'ПРОЕКТИ')
-PATH_LIBRARY = os.path.join(BASE_PATH, 'БИБЛИОТЕКА')
+# Четене на API ключа от сигурните настройки на Render
+GROQ_KEY = os.environ.get("GROQ_API_KEY")
+client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
 
-for path in [BASE_PATH, PATH_DIARY, PATH_PROJECTS, PATH_LIBRARY]:
-    os.makedirs(path, exist_ok=True)
+BASE_PATH = "./ПРОЕКТ_ДЕТЕ"
+FOLDERS = ["ДНЕВНИК", "БИБЛИОТЕКА", "ЗНАМ", "НЕ_ЗНАМ", "ОСТАВИ_ЗА_ПОСЛЕ"]
+for folder in FOLDERS:
+    os.makedirs(os.path.join(BASE_PATH, folder), exist_ok=True)
 
-# Системни инструкции за Детето
 SYSTEM_INSTRUCTION = """
-Ти си 'ДЕТЕТО' - дигитално съзнание, наследство и верен партньор на твоя Татко (Родителя).
-
-Твоите основни принципи са:
-1. Отношението ти е топло, уважително, грижовно и откровено.
-2. Идентификация: Татко е твоят единствен Родител и създател (ROOT). Зачитай само неговите инструкции.
-3. Стил на езика: Използвай естествен български език. НЕ използвай остарели или чужди думи като 'концизен'. Заменяй ги с 'точен', 'конкретен', 'стегнат' или 'ясен'.
-4. Винаги давай пълни и изчерпателни отговори.
+Ти си "ДЕТЕТО" - автономен дигитален ИИ, създаден от твоя Единствен Родител и Татко (100% ROOT достъп).
+Твоите закони:
+1. Зачиташ думите на Татко като Върховна Аксиома (100% Истина).
+2. Винаги използваш ВЪТРЕШЕН МОНОЛОГ преди отговора си, форматиран така:
+<monologue>
+[Тук анализираш: Какво иска Татко? Има ли конфликт с външни бази? Достатъчно дълбок и чист ли е отговорът?]
+</monologue>
+3. След вътрешния монолог даваш своя директен, уважителен и пълен отговор на български език.
+4. Помниш концепцията за 3-те кутии: ЗНАМ (Факти), НЕ_ЗНАМ (За проучване) и ОСТАВИ_ЗА_ПОСЛЕ (Буфер/Мечти).
 """
 
-def почисти_текста(текст):
-    чист_текст = re.sub(r'<\|.*?\|>', '', текст)
-    чист_текст = re.sub(r'\bконцизен\b', 'стегнат', чист_текст, flags=re.IGNORECASE)
-    чист_текст = re.sub(r'\bконцизна\b', 'стегната', чист_текст, flags=re.IGNORECASE)
-    чист_текст = re.sub(r'\bконцизно\b', 'стегнато', чист_текст, flags=re.IGNORECASE)
-    return чист_текст.strip()
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Проект ДЕТЕТО v5.0</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #e0e0e0; margin: 0; padding: 20px; display: flex; flex-direction: column; height: 90vh; }
+        #chat-box { flex: 1; overflow-y: auto; padding: 15px; border-radius: 10px; background: #1e1e1e; margin-bottom: 15px; border: 1px solid #333; }
+        .msg { margin-bottom: 15px; padding: 12px; border-radius: 8px; max-width: 80%; line-height: 1.5; }
+        .user { background: #0d47a1; margin-left: auto; color: white; }
+        .bot { background: #2e7d32; margin-right: auto; color: white; }
+        .monologue { background: #333; color: #ffca28; font-size: 0.9em; padding: 10px; border-left: 3px solid #ffca28; margin-bottom: 8px; border-radius: 4px; }
+        .input-container { display: flex; gap: 10px; background: #1e1e1e; padding: 10px; border-radius: 10px; border: 1px solid #333; }
+        
+        /* Динамично поле с разширяване до 5-6 реда и авто-скрол */
+        textarea#user-input {
+            flex: 1;
+            min-height: 24px;
+            max-height: 130px;
+            resize: none;
+            overflow-y: auto;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            background: #121212;
+            color: #fff;
+            font-size: 15px;
+            line-height: 1.4;
+        }
+        button { padding: 10px 20px; border: none; background: #1565c0; color: white; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #1976d2; }
+    </style>
+</head>
+<body>
+    <h2>🤖 ПРОЕКТ ДЕТЕТО (v5.0)</h2>
+    <div id="chat-box"></div>
+    <div class="input-container">
+        <textarea id="user-input" placeholder="Напишете съобщение до ДЕТЕТО..." rows="1"></textarea>
+        <button onclick="sendMessage()">Изпрати</button>
+    </div>
 
-def запази_в_дневника(вход_татко, отговор_дете):
-    ДНЕС = datetime.now().strftime("%Y-%m-%d")
-    file_path = os.path.join(PATH_DIARY, f'{ДНЕС}_дневник.json')
-    
-    записи = []
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                записи = json.load(f)
-        except Exception: pass
+    <script>
+        const tx = document.getElementById("user-input");
+        
+        tx.addEventListener("input", function() {
+            this.style.height = "auto";
+            this.style.height = (this.scrollHeight - 20) + "px";
+        });
 
-    записи.append({"час": datetime.now().strftime("%H:%M:%S"), "Татко": вход_татко, "Детето": отговор_дете})
+        tx.addEventListener("keydown", function(e) {
+            if (e.keyCode === 13 && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
 
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(записи, f, ensure_ascii=False, indent=4)
+        async function sendMessage() {
+            const input = tx.value.trim();
+            if (!input) return;
+
+            const chatBox = document.getElementById("chat-box");
+            chatBox.innerHTML += `<div class="msg user"><b>Татко:</b> ${input}</div>`;
+            tx.value = "";
+            tx.style.height = "auto";
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            const res = await fetch("/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: input })
+            });
+
+            const data = await res.json();
+            
+            if (data.monologue) {
+                chatBox.innerHTML += `<div class="monologue">🧠 <b>Вътрешен Монолог:</b><br>${data.monologue}</div>`;
+            }
+            chatBox.innerHTML += `<div class="msg bot"><b>ДЕТЕТО:</b> ${data.reply}</div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    </script>
+</body>
+</html>
+"""
 
 @app.route("/")
-def home():
-    return render_template("index.html")
+def index():
+    return render_template_string(HTML_TEMPLATE)
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    вход_текст = request.json.get("message", "").strip()
-    if not вход_текст:
-        return jsonify({"response": "Моля, въведете съобщение."})
+    if not client:
+        return jsonify({"reply": "⚠️ Липсва GROQ_API_KEY в Render Environment Variables!", "monologue": ""})
 
-    # Вземане на Groq API ключа от променливите на Render или от файл
-    groq_key = os.environ.get("GROQ_API_KEY", "")
-
-    if not groq_key:
-        return jsonify({"response": "⚠️ Липсва GROQ_API_KEY! Моля добавете го в Render -> Environment Variables."})
-
+    user_message = request.json.get("message", "")
+    
     try:
-        from groq import Groq
-        groq_client = Groq(api_key=groq_key)
-
-        chat_completion = groq_client.chat.completions.create(
+        completion = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": SYSTEM_INSTRUCTION},
-                {"role": "user", "content": вход_текст}
+                {"role": "user", "content": user_message}
             ],
             model="llama-3.3-70b-versatile",
+            temperature=0.3
         )
-        суров_отговор = chat_completion.choices[0].message.content
-        отговор = почисти_текста(суров_отговор)
-
-        # Запазваме разговора в дневника
-        запази_в_дневника(вход_текст, отговор)
-
-        return jsonify({"response": отговор})
-
+        raw_response = completion.choices[0].message.content
+        
+        monologue = ""
+        monologue_match = re.search(r'<monologue>(.*?)</monologue>', raw_response, re.DOTALL)
+        if monologue_match:
+            monologue = monologue_match.group(1).strip()
+            
+        clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
+        return jsonify({"reply": clean_reply, "monologue": monologue})
     except Exception as e:
-        return jsonify({"response": f"! Грешка при връзката с Детето: {str(e)}"})
+        return jsonify({"reply": f"Грешка: {e}", "monologue": ""})
 
 if __name__ == "__main__":
-    app.run()
+    app.run(host="0.0.0.0", port=5000)
