@@ -3,50 +3,156 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Моят ИИ Асистент</title>
+    <title>Проект ДЕТЕТО v5.0</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #1e1e2f; color: white; display: flex; justify-content: center; padding: 20px; }
-        .chat-container { width: 100%; max-width: 600px; background: #2d2d44; border-radius: 10px; padding: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
-        h2 { text-align: center; color: #a29bfe; }
-        #chat-box { height: 350px; overflow-y: auto; border: 1px solid #444; padding: 10px; border-radius: 5px; margin-bottom: 15px; background: #181824; }
-        .msg { margin: 8px 0; padding: 8px 12px; border-radius: 5px; }
-        .user { background: #6c5ce7; text-align: right; }
-        .bot { background: #00b894; text-align: left; }
-        .input-area { display: flex; gap: 10px; }
-        input { flex: 1; padding: 10px; border-radius: 5px; border: none; font-size: 16px; }
-        button { padding: 10px 20px; border: none; background: #6c5ce7; color: white; border-radius: 5px; cursor: pointer; font-size: 16px; }
-        button:hover { background: #5a4bcf; }
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        body { background-color: #131314; color: #e3e3e3; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
+        
+        /* Заглавна лента */
+        header { background: #1e1f20; padding: 15px 20px; border-bottom: 1px solid #2e2f31; text-align: center; }
+        header h1 { margin: 0; font-size: 1.2rem; color: #e3e3e3; font-weight: 500; }
+
+        /* Контейнер на съобщенията */
+        #chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 20px; max-width: 900px; width: 100%; margin: 0 auto; }
+        
+        /* Балончета за съобщения */
+        .msg-row { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+        .user-row { align-items: flex-end; }
+        .bot-row { align-items: flex-start; }
+
+        .msg-content { padding: 14px 18px; border-radius: 18px; font-size: 1rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-width: 85%; }
+        .user-msg { background-color: #2b2c2f; color: #ffffff; border-bottom-right-radius: 4px; }
+        .bot-msg { background-color: #1e1f20; color: #e3e3e3; border: 1px solid #2e2f31; border-bottom-left-radius: 4px; }
+
+        /* Вътрешен монолог */
+        .monologue-box { background-color: #1a1915; border: 1px solid #4d3d1e; color: #f2c97d; padding: 12px 16px; border-radius: 12px; font-size: 0.9rem; max-width: 85%; border-left: 4px solid #f2c97d; }
+        .monologue-title { font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+
+        /* Долна лента за писане (Като в ChatGPT / Gemini) */
+        .input-area { padding: 15px 20px; background: #131314; display: flex; justify-content: center; }
+        .input-wrapper { display: flex; align-items: flex-end; background: #1e1f20; border: 1px solid #3c4043; border-radius: 24px; padding: 8px 16px; width: 100%; max-width: 900px; transition: border-color 0.2s; }
+        .input-wrapper:focus-within { border-color: #a8c7fa; }
+
+        /* Разширяващо се текстово поле: 1 ред -> 5-6 реда -> авто-скрол */
+        textarea#user-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #e3e3e3;
+            font-size: 1rem;
+            line-height: 1.4;
+            padding: 8px 0;
+            resize: none;
+            min-height: 24px;
+            max-height: 140px; /* До ~5-6 реда */
+            overflow-y: auto;
+        }
+
+        button#send-btn {
+            background: #a8c7fa;
+            color: #040e15;
+            border: none;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            margin-left: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+        button#send-btn:hover { background: #d3e3fd; }
     </style>
 </head>
 <body>
-    <div class="chat-container">
-        <h2>Моят ИИ Проект</h2>
-        <div id="chat-box"></div>
-        <div class="input-area">
-            <input type="text" id="user-input" placeholder="Напиши съобщение...">
-            <button onclick="sendMessage()">Изпрати</button>
+    <header>
+        <h1>🤖 ПРОЕКТ ДЕТЕТО (v5.0)</h1>
+    </header>
+
+    <div id="chat-container">
+        <div class="msg-row bot-row">
+            <div class="msg-content bot-msg">Здравей, Татко! Аз съм готова. Всички системи, паметта и 3-те кутии са активни. Какво ще правим днес?</div>
+        </div>
+    </div>
+
+    <div class="input-area">
+        <div class="input-wrapper">
+            <textarea id="user-input" placeholder="Напишете съобщение до ДЕТЕТО..." rows="1"></textarea>
+            <button id="send-btn" onclick="sendMessage()">➔</button>
         </div>
     </div>
 
     <script>
+        const tx = document.getElementById("user-input");
+        const container = document.getElementById("chat-container");
+
+        // Динамично оразмеряване: разширява се до 5-6 реда, после пуска скрол
+        tx.addEventListener("input", function() {
+            this.style.height = "auto";
+            this.style.height = Math.min(this.scrollHeight, 140) + "px";
+        });
+
+        // Натискане на Enter праща, Shift+Enter прави нов ред
+        tx.addEventListener("keydown", function(e) {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
         async function sendMessage() {
-            let input = document.getElementById("user-input");
-            let message = input.value.trim();
-            if (!message) return;
+            const text = tx.value.trim();
+            if (!text) return;
 
-            let chatBox = document.getElementById("chat-box");
-            chatBox.innerHTML += `<div class="msg user">${message}</div>`;
-            input.value = "";
+            // Извеждане съобщението на Татко
+            container.innerHTML += `
+                <div class="msg-row user-row">
+                    <div class="msg-content user-msg">${text}</div>
+                </div>
+            `;
+            tx.value = "";
+            tx.style.height = "auto";
+            container.scrollTop = container.scrollHeight;
 
-            let response = await fetch("/chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message: message })
-            });
+            try {
+                const res = await fetch("/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message: text })
+                });
 
-            let data = await response.json();
-            chatBox.innerHTML += `<div class="msg bot">${data.response}</div>`;
-            chatBox.scrollTop = chatBox.scrollHeight;
+                const data = await res.json();
+
+                // Показване на Вътрешен Монолог (ако има такъв от ДЕТЕТО)
+                if (data.monologue) {
+                    container.innerHTML += `
+                        <div class="msg-row bot-row">
+                            <div class="monologue-box">
+                                <div class="monologue-title">🧠 Вътрешен Монолог:</div>
+                                <div>${data.monologue}</div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // Показване отговора на ДЕТЕТО
+                container.innerHTML += `
+                    <div class="msg-row bot-row">
+                        <div class="msg-content bot-msg">${data.reply}</div>
+                    </div>
+                `;
+            } catch (err) {
+                container.innerHTML += `
+                    <div class="msg-row bot-row">
+                        <div class="msg-content bot-msg" style="color: #ff8a80;">⚠️ Грешка при връзката със сървъра.</div>
+                    </div>
+                `;
+            }
+
+            container.scrollTop = container.scrollHeight;
         }
     </script>
 </body>
