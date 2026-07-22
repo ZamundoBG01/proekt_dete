@@ -94,6 +94,33 @@ def upload_file_to_github(relative_filepath, file_bytes):
     put_res = requests.put(url, headers=headers, json=payload)
     return put_res.status_code in [200, 201]
 
+def delete_file_from_workspace(ws_name, filename):
+    paths, ws_clean = get_workspace_paths(ws_name)
+    filepath = os.path.join(paths["library"], filename)
+    
+    deleted = False
+    if os.path.exists(filepath):
+        os.remove(filepath)
+        deleted = True
+        
+    if GITHUB_TOKEN and GITHUB_REPO:
+        rel_path = os.path.relpath(filepath, BASE_DIR)
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{rel_path}"
+        headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+        get_res = requests.get(url, headers=headers)
+        if get_res.status_code == 200:
+            sha = get_res.json().get("sha")
+            payload = {
+                "message": f"N.I.K.I. Auto-Delete: {filename}",
+                "sha": sha,
+                "branch": GITHUB_BRANCH
+            }
+            requests.delete(url, headers=headers, json=payload)
+            deleted = True
+            
+    build_vector_index_for_workspace(ws_clean)
+    return deleted
+
 def run_self_diagnostics():
     report = []
     report.append("🔍 **САМОДИАГНОСТИКА НА N.I.K.I. CORE**\n")
@@ -392,7 +419,7 @@ SYSTEM_INSTRUCTION = """
 
 ПРАВИЛА НА ОБЩУВАНЕ:
 - Говориш естествено, професионално и гладко на правилен български език.
-- НЕ използвай буквални преводи от английски като "Аз съм рад" или "Аз съм осъзнавам".Използвай правилни форми като "Радвам се", "Осъзнавам", "Извърших" или "Разбирам".
+- НЕ използвай буквални преводи от английски като "Аз съм рад" или "Аз съм осъзнавам". Използвай правилни форми като "Радвам се", "Осъзнавам", "Извърших" или "Разбирам".
 - Винаги говориш в първо лице ("Аз").
 
 ЗАДЪЛЖИТЕЛЕН МИСЛОВЕН ПРОЦЕС:
@@ -451,7 +478,7 @@ def upload_file():
     if ext not in {".txt", ".pdf", ".docx"}:
         return jsonify({"status": "error", "message": "Неподдържан формат."})
         
-    # Поправка: Поддръжка на кирилица, интервали и тирета в имената
+    # Пълна поддръжка на Кирилица, интервали и тирета!
     clean_name = re.sub(r'[^\w\s\.\-\(\)]', '_', file.filename).strip()
     filename = clean_name if clean_name else f"document{ext}"
     
@@ -484,6 +511,16 @@ def upload_file():
     
     msg = f"Файлът '{filename}' е качен, анализиран и фактите/задачите са извлечени!" if uploaded else f"Файлът '{filename}' е качен локално и анализиран."
     return jsonify({"status": "success", "message": msg})
+
+@app.route("/delete_file", methods=["POST"])
+def delete_file_route():
+    data = request.json or {}
+    ws_name = data.get("workspace", "general")
+    filename = data.get("filename", "")
+    
+    if delete_file_from_workspace(ws_name, filename):
+        return jsonify({"status": "success", "message": f"Файлът '{filename}' е изтрит успешно."})
+    return jsonify({"status": "error", "message": "Файлът не е намерен."})
 
 def run_autonomous_chat_loop(messages, client, max_auto_turns=3):
     full_reply = ""
@@ -537,6 +574,16 @@ def chat():
 
     detected_ws = detect_workspace_from_query(user_message)
     target_ws = detected_ws if detected_ws else current_ws
+
+    if user_message.lower().startswith("изтрий файл:"):
+        target_filename = user_message[12:].strip()
+        if delete_file_from_workspace(target_ws, target_filename):
+            return jsonify({
+                "reply": f"🗑️ Файлът '{target_filename}' беше изтрит от библиотеката и GitHub.",
+                "monologue": "Премахнах указания файл от локалната библиотека, изтрих го от репозиторието в GitHub и пренастроих векторния индекс.",
+                "time": now_bg.strftime("%H:%M"),
+                "target_workspace": target_ws
+            })
 
     if user_message.lower().startswith("задача:"):
         task_text = user_message[7:].strip()
