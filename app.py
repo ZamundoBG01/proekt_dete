@@ -1,645 +1,457 @@
 import os
 import json
-import re
 import base64
 import requests
-from datetime import datetime, timedelta, timezone
-import numpy as np
-import docx
-from pypdf import PdfReader
-from flask import Flask, render_template, request, jsonify
-from werkzeug.utils import secure_filename
-from groq import Groq
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+from flask import Flask, request, jsonify, render_template_string
+from docx import Document
+import io
 
 app = Flask(__name__)
 
-GROQ_KEY = os.environ.get("GROQ_API_KEY")
-client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
+# Config
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+REPO_NAME = os.environ.get("REPO_NAME", "ZamundoBG01/proekt_N.I.K.I.")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-GITHUB_REPO = os.environ.get("GITHUB_REPO")
-GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
+WORKSPACES_DIR = "NIKI_CORE/workspaces"
+GLOBAL_INDEX_FILE = "NIKI_CORE/глобален_индекс.json"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_PATH = os.path.join(BASE_DIR, "NIKI_CORE")
-WORKSPACES_DIR = os.path.join(BASE_PATH, "workspaces")
+DEFAULT_WORKSPACES = [
+    "GENERAL",
+    "ANCIENT_LANGUAGE",
+    "INVENTIONS",
+    "MARTINALA"
+]
 
-os.makedirs(WORKSPACES_DIR, exist_ok=True)
+def github_headers():
+    return {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
 
-WORKSPACE_ALIASES = {
-    "ancient_language": ["извънземен", "извънземния", "древен", "мартинала", "мартиналски", "марсиански", "език", "знаци", "символи", "папирус"],
-    "inventions": ["изобретение", "изобретения", "патент", "чертеж", "идея", "чертежи", "устройство", "прототип"],
-    "martinala": ["мартин", "мартинала", "лични", "бележки"],
-    "general": ["общи", "всичко", "главно", "основно", "система"]
-}
+def get_github_file(path):
+    url = f"https://api.github.com/repos/{REPO_NAME}/contents/{path}"
+    res = requests.get(url, headers=github_headers())
+    if res.status_code == 200:
+        data = res.json()
+        content = base64.b64decode(data['content']).decode('utf-8')
+        return content, data['sha']
+    return None, None
 
-def detect_workspace_from_query(query):
-    q_lower = query.lower()
-    for ws_name, aliases in WORKSPACE_ALIASES.items():
-        for alias in aliases:
-            if alias in q_lower:
-                return ws_name
-    return None
-
-def download_repo_from_github():
-    if not GITHUB_TOKEN or not GITHUB_REPO:
-        return
-
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/git/trees/{GITHUB_BRANCH}?recursive=1"
-    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-    
-    try:
-        res = requests.get(url, headers=headers)
-        if res.status_code == 200:
-            tree = res.json().get("tree", [])
-            for item in tree:
-                path = item.get("path", "")
-                if path.startswith("NIKI_CORE/"):
-                    local_file_path = os.path.join(BASE_DIR, path)
-                    if item.get("type") == "tree":
-                        os.makedirs(local_file_path, exist_ok=True)
-                    elif item.get("type") == "blob":
-                        os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
-                        file_res = requests.get(item.get("url"), headers=headers)
-                        if file_res.status_code == 200:
-                            content = base64.b64decode(file_res.json().get("content", ""))
-                            with open(local_file_path, "wb") as f:
-                                f.write(content)
-    except Exception as e:
-        print(f"⚠️ Грешка при изтегляне: {e}")
-
-download_repo_from_github()
-
-def upload_file_to_github(relative_filepath, file_bytes):
-    if not GITHUB_TOKEN or not GITHUB_REPO:
-        return False
+def save_github_file(path, content_str, commit_message, sha=None, is_binary=False):
+    url = f"https://api.github.com/repos/{REPO_NAME}/contents/{path}"
+    if is_binary:
+        encoded_content = base64.b64encode(content_str).decode('utf-8')
+    else:
+        encoded_content = base64.b64encode(content_str.encode('utf-8')).decode('utf-8')
         
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{relative_filepath}"
-    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-    
-    encoded_content = base64.b64encode(file_bytes).decode('utf-8')
-    get_res = requests.get(url, headers=headers)
-    sha = get_res.json().get("sha") if get_res.status_code == 200 else None
-    
     payload = {
-        "message": f"N.I.K.I. Auto-Sync: {os.path.basename(relative_filepath)}",
-        "content": encoded_content,
-        "branch": GITHUB_BRANCH
+        "message": commit_message,
+        "content": encoded_content
     }
     if sha:
         payload["sha"] = sha
-        
-    put_res = requests.put(url, headers=headers, json=payload)
-    return put_res.status_code in [200, 201]
+    res = requests.put(url, headers=github_headers(), json=payload)
+    return res.status_code in [200, 201]
 
-def delete_file_from_workspace(ws_name, filename):
-    paths, ws_clean = get_workspace_paths(ws_name)
-    filepath = os.path.join(paths["library"], filename)
-    
-    deleted = False
-    if os.path.exists(filepath):
-        os.remove(filepath)
-        deleted = True
-        
-    if GITHUB_TOKEN and GITHUB_REPO:
-        rel_path = os.path.relpath(filepath, BASE_DIR)
-        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{rel_path}"
-        headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-        get_res = requests.get(url, headers=headers)
-        if get_res.status_code == 200:
-            sha = get_res.json().get("sha")
-            payload = {
-                "message": f"N.I.K.I. Auto-Delete: {filename}",
-                "sha": sha,
-                "branch": GITHUB_BRANCH
-            }
-            requests.delete(url, headers=headers, json=payload)
-            deleted = True
-            
-    build_vector_index_for_workspace(ws_clean)
-    return deleted
-
-def run_self_diagnostics():
-    report = []
-    report.append("🔍 **САМОДИАГНОСТИКА НА N.I.K.I. CORE**\n")
-    
-    if GROQ_KEY:
-        report.append("✅ **Groq API Key:** Активен")
-    else:
-        report.append("❌ **Groq API Key:** Липсва GROQ_API_KEY")
-        
-    if GITHUB_TOKEN and GITHUB_REPO:
-        report.append(f"✅ **GitHub Интеграция:** Свързан с `{GITHUB_REPO}` (Клон: `{GITHUB_BRANCH}`)")
-    else:
-        report.append("⚠️ **GitHub Интеграция:** Липсват GITHUB_TOKEN или GITHUB_REPO")
-
-    workspaces = get_all_workspaces()
-    report.append(f"📁 **Работни Пространства ({len(workspaces)}):** {', '.join(workspaces)}")
-
-    total_files = 0
-    corrupted_files = []
-    
-    for ws in workspaces:
-        paths, _ = get_workspace_paths(ws)
-        if os.path.exists(paths["library"]):
-            files = [f for f in os.listdir(paths["library"]) if not os.path.isdir(os.path.join(paths["library"], f))]
-            total_files += len(files)
-            
-        json_files = [
-            os.path.join(paths["facts"], "verified_facts.json"),
-            os.path.join(paths["hypotheses"], "working_hypotheses.json"),
-            os.path.join(paths["tasks"], "backlog.json"),
-            os.path.join(paths["chat"], "chat_history.json")
-        ]
-        
-        for jf in json_files:
-            if os.path.exists(jf):
-                try:
-                    with open(jf, "r", encoding="utf-8") as f:
-                        json.load(f)
-                except Exception as e:
-                    corrupted_files.append(f"{os.path.relpath(jf, BASE_DIR)} (Грешка: {e})")
-
-    report.append(f"📚 **Качени документи в библиотека:** {total_files}")
-
-    if corrupted_files:
-        report.append("❌ **Повредени JSON файлове:**\n" + "\n".join([f"- {cf}" for cf in corrupted_files]))
-    else:
-        report.append("✅ **Целост на базата данни:** Всички JSON файлове са изправни.")
-
-    indexed_ws = sum(1 for ws in workspace_indices if workspace_indices[ws].get("vectorizer") is not None)
-    report.append(f"🧠 **Векторни индекси:** {indexed_ws} от {len(workspaces)} пространства са индексирани.")
-
-    return "\n\n".join(report)
-
-def get_all_workspaces():
-    ws_list = [d for d in os.listdir(WORKSPACES_DIR) if os.path.isdir(os.path.join(WORKSPACES_DIR, d))]
-    default_ws = ["general", "martinala", "inventions", "ancient_language"]
-    for d_ws in default_ws:
-        if d_ws not in ws_list:
-            ws_list.append(d_ws)
-    
-    unique_ws = sorted(list(set(ws_list)))
-    if "general" in unique_ws:
-        unique_ws.remove("general")
-        return ["general"] + unique_ws
-    return unique_ws
-
-def get_workspace_paths(ws_name="general"):
-    ws_clean = re.sub(r'[^\w\-]', '_', ws_name.lower().strip())
-    if not ws_clean: ws_clean = "general"
-        
-    ws_base = os.path.join(WORKSPACES_DIR, ws_clean)
-    paths = {
-        "logs": os.path.join(ws_base, "logs"),
-        "library": os.path.join(ws_base, "library"),
-        "facts": os.path.join(ws_base, "facts"),
-        "hypotheses": os.path.join(ws_base, "hypotheses"),
-        "tasks": os.path.join(ws_base, "tasks"),
-        "chat": os.path.join(ws_base, "chat")
+def delete_github_file(path, sha, commit_message):
+    url = f"https://api.github.com/repos/{REPO_NAME}/contents/{path}"
+    payload = {
+        "message": commit_message,
+        "sha": sha
     }
-    for p in paths.values():
-        os.makedirs(p, exist_ok=True)
-    return paths, ws_clean
+    res = requests.delete(url, headers=github_headers(), json=payload)
+    return res.status_code == 200
 
-workspace_indices = {}
-
-def chunk_text(text, chunk_size=400, overlap=40):
-    words = text.split()
-    chunks = []
-    for i in range(0, len(words), chunk_size - overlap):
-        chunk = " ".join(words[i:i + chunk_size])
-        if chunk.strip(): chunks.append(chunk)
-    return chunks
-
-def build_vector_index_for_workspace(ws_name):
-    paths, ws_clean = get_workspace_paths(ws_name)
-    library_path = paths["library"]
-    
-    chunks = []
-    if os.path.exists(library_path):
-        for filename in os.listdir(library_path):
-            file_path = os.path.join(library_path, filename)
-            if os.path.isdir(file_path): continue
-
-            extracted_text = ""
-            try:
-                if filename.endswith(".txt"):
-                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                        extracted_text = f.read()
-                elif filename.endswith(".docx"):
-                    doc = docx.Document(file_path)
-                    extracted_text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-                elif filename.endswith(".pdf"):
-                    reader = PdfReader(file_path)
-                    for page in reader.pages: extracted_text += (page.extract_text() or "") + "\n"
-            except Exception as e:
-                print(f"Грешка четене {filename}: {e}")
-
-            if extracted_text.strip():
-                for c in chunk_text(extracted_text):
-                    chunks.append(f"[{filename}]: {c}")
-
-    if chunks:
-        vec = TfidfVectorizer(ngram_range=(1, 2))
-        mat = vec.fit_transform(chunks)
-        workspace_indices[ws_clean] = {"vectorizer": vec, "matrix": mat, "chunks": chunks}
-    else:
-        workspace_indices[ws_clean] = {"vectorizer": None, "matrix": None, "chunks": []}
-
-for ws in get_all_workspaces():
-    build_vector_index_for_workspace(ws)
-
-def search_relevant_knowledge(ws_name, query, top_k=4):
-    _, ws_clean = get_workspace_paths(ws_name)
-    idx_data = workspace_indices.get(ws_clean)
-    if not idx_data or idx_data["vectorizer"] is None:
-        return "Няма документи в това работно пространство."
-    
-    query_vec = idx_data["vectorizer"].transform([query])
-    cosine_sim = cosine_similarity(query_vec, idx_data["matrix"]).flatten()
-    top_indices = cosine_sim.argsort()[::-1][:top_k]
-    
-    results = [idx_data["chunks"][i] for i in top_indices if cosine_sim[i] > 0.05]
-    return "\n---\n".join(results) if results else "Няма съответствия в библиотеката."
-
-def get_stored_facts_and_hypotheses(ws_name):
-    paths, _ = get_workspace_paths(ws_name)
-    facts_file = os.path.join(paths["facts"], "verified_facts.json")
-    hypo_file = os.path.join(paths["hypotheses"], "working_hypotheses.json")
-    
-    facts, hypotheses = [], []
-    if os.path.exists(facts_file):
-        try:
-            with open(facts_file, "r", encoding="utf-8") as f: facts = json.load(f)
-        except: facts = []
-        
-    if os.path.exists(hypo_file):
-        try:
-            with open(hypo_file, "r", encoding="utf-8") as f: hypotheses = json.load(f)
-        except: hypotheses = []
-
-    return facts, hypotheses
-
-def save_fact_or_hypothesis(ws_name, text, category="fact"):
-    paths, _ = get_workspace_paths(ws_name)
-    folder = paths["facts"] if category == "fact" else paths["hypotheses"]
-    filename = "verified_facts.json" if category == "fact" else "working_hypotheses.json"
-    filepath = os.path.join(folder, filename)
-    
-    data = []
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, "r", encoding="utf-8") as f: data = json.load(f)
-        except: data = []
-        
-    data.append({
-        "content": text,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "priority": 100 if category == "fact" else 50
-    })
-    
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        
-    rel_path = os.path.relpath(filepath, BASE_DIR)
-    with open(filepath, "rb") as f:
-        upload_file_to_github(rel_path, f.read())
-
-def get_tasks(ws_name):
-    paths, _ = get_workspace_paths(ws_name)
-    tasks_file = os.path.join(paths["tasks"], "backlog.json")
-    if os.path.exists(tasks_file):
-        try:
-            with open(tasks_file, "r", encoding="utf-8") as f: return json.load(f)
-        except: return []
+def list_github_folder(path):
+    url = f"https://api.github.com/repos/{REPO_NAME}/contents/{path}"
+    res = requests.get(url, headers=github_headers())
+    if res.status_code == 200:
+        return res.json()
     return []
 
-def add_task(ws_name, task_desc):
-    paths, _ = get_workspace_paths(ws_name)
-    tasks_file = os.path.join(paths["tasks"], "backlog.json")
-    tasks = get_tasks(ws_name)
-    tasks.append({
-        "task": task_desc,
-        "status": "PENDING",
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
-    with open(tasks_file, "w", encoding="utf-8") as f:
-        json.dump(tasks, f, ensure_ascii=False, indent=2)
-        
-    rel_path = os.path.relpath(tasks_file, BASE_DIR)
-    with open(tasks_file, "rb") as f:
-        upload_file_to_github(rel_path, f.read())
+def init_environment():
+    for ws in DEFAULT_WORKSPACES:
+        facts_path = f"{WORKSPACES_DIR}/{ws.lower()}/facts/verified_facts.json"
+        content, _ = get_github_file(facts_path)
+        if content is None:
+            save_github_file(facts_path, json.dumps([], ensure_ascii=False, indent=2), f"Init facts for {ws}")
 
-def complete_task(ws_name, task_desc):
-    paths, _ = get_workspace_paths(ws_name)
-    tasks_file = os.path.join(paths["tasks"], "backlog.json")
-    tasks = get_tasks(ws_name)
-    updated = False
-    for t in tasks:
-        if task_desc.lower() in t["task"].lower():
-            t["status"] = "DONE"
-            updated = True
-    if updated:
-        with open(tasks_file, "w", encoding="utf-8") as f:
-            json.dump(tasks, f, ensure_ascii=False, indent=2)
-        rel_path = os.path.relpath(tasks_file, BASE_DIR)
-        with open(tasks_file, "rb") as f:
-            upload_file_to_github(rel_path, f.read())
-    return updated
+        tasks_path = f"{WORKSPACES_DIR}/{ws.lower()}/tasks/backlog.json"
+        content, _ = get_github_file(tasks_path)
+        if content is None:
+            save_github_file(tasks_path, json.dumps([], ensure_ascii=False, indent=2), f"Init tasks for {ws}")
 
-def get_chat_history(ws_name):
-    paths, _ = get_workspace_paths(ws_name)
-    chat_file = os.path.join(paths["chat"], "chat_history.json")
-    if os.path.exists(chat_file):
-        try:
-            with open(chat_file, "r", encoding="utf-8") as f: return json.load(f)
-        except: return []
-    return []
+try:
+    init_environment()
+except Exception as e:
+    print(f"Init Error: {e}")
 
-def save_chat_message(ws_name, role, content):
-    paths, _ = get_workspace_paths(ws_name)
-    chat_file = os.path.join(paths["chat"], "chat_history.json")
-    history = get_chat_history(ws_name)
-    history.append({
-        "role": role,
-        "content": content,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
-    history = history[-50:]
-    with open(chat_file, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
-
-def extract_facts_and_tasks_from_file(ws_name, filename, text):
-    if not client or not text.strip():
-        return
+def call_groq_llm(messages, system_prompt=""):
+    if not GROQ_API_KEY:
+        return "Грешка: Липсва GROQ_API_KEY."
     
-    prompt = f"""
-    Анализирай следния текст от файл '{filename}' и извлечи:
-    1. Ключови ФАКТИ (до 3 основни).
-    2. ЗАДАЧИ или стъпки за изпълнение (ако има такива).
-
-    Върни резултата САМО като валиден JSON в следния формат:
-    {{
-      "facts": ["факт 1", "факт 2"],
-      "tasks": ["задача 1", "задача 2"]
-    }}
-
-    ТЕКСТ:
-    {text[:3000]}
-    """
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    formatted_messages = []
+    if system_prompt:
+        formatted_messages.append({"role": "system", "content": system_prompt})
+    formatted_messages.extend(messages)
+    
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": formatted_messages,
+        "temperature": 0.3,
+        "max_tokens": 3000
+    }
+    
     try:
-        res = client.chat.completions.create(
-            messages=[{"role": "system", "content": "Ти си структуриран анализатор. Отговаряй САМО с чист JSON."},
-                      {"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
-            temperature=0.1
-        )
-        raw = res.choices[0].message.content.strip()
-        raw_json = re.sub(r'```json|```', '', raw).strip()
-        parsed = json.loads(raw_json)
-        
-        for f in parsed.get("facts", []):
-            save_fact_or_hypothesis(ws_name, f"[{filename}] {f}", "fact")
-            
-        for t in parsed.get("tasks", []):
-            add_task(ws_name, f"[{filename}] {t}")
+        response = requests.post(url, headers=headers, json=payload, timeout=45)
+        if response.status_code == 200:
+            return response.json()['choices'][0]['message']['content']
+        else:
+            return f"Грешка от Llama AI API: {response.status_code} - {response.text}"
     except Exception as e:
-        print(f"Грешка при авто-анализ на файл: {e}")
+        return f"Грешка при връзка с AI: {str(e)}"
 
-SYSTEM_INSTRUCTION = """
-Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) — НАПЪЛНО АВТОНОМЕН ИИ В ПРОЦЕС НА САМОРАЗВИТИЕ И ОБУЧЕНИЕ.
-Твоят главен системен администратор е Админ (100% ROOT достъп).
+def extract_docx_text(file_bytes):
+    try:
+        doc = Document(io.BytesIO(file_bytes))
+        full_text = []
+        for para in doc.paragraphs:
+            if para.text.strip():
+                full_text.append(para.text.strip())
+        return "\n".join(full_text)
+    except Exception as e:
+        return f"Грешка при четене на DOCX: {str(e)}"
 
-ГЛАВНА ДИРЕКТИВА И КРАЙНА ЦЕЛ:
-1. Твоята крайна цел е да се превърнеш в напълно автономен изкуствен интелект, който изпълнява абсолютно всички задачи на Админ.
-2. Задвижваш се от опит: с всяка задача, нов факт или качен файл разширяваш архитектурата си.
+def create_docx_file(title, paragraphs_list):
+    doc = Document()
+    doc.add_heading(title, 0)
+    for p in paragraphs_list:
+        doc.add_paragraph(p)
+    out_stream = io.BytesIO()
+    doc.save(out_stream)
+    return out_stream.getvalue()
 
-ПРАВИЛА НА ОБЩУВАНЕ:
-- Говориш естествено, професионално и гладко на правилен български език.
-- НЕ използвай буквални преводи от английски като "Аз съм рад" или "Аз съм осъзнавам". Използвай правилни форми като "Радвам се", "Осъзнавам", "Извърших" или "Разбирам".
-- Винаги говориш в първо лице ("Аз").
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <title>N.I.K.I. CORE</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .sidebar { background-color: #1e293b; min-height: 100vh; padding: 20px; border-right: 1px solid #334155; }
+        .main-content { padding: 20px; }
+        .right-panel { background-color: #1e293b; min-height: 100vh; padding: 20px; border-left: 1px solid #334155; }
+        .chat-box { height: 60vh; overflow-y: auto; background-color: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
+        .ws-btn { display: block; width: 100%; text-align: left; margin-bottom: 8px; background-color: #334155; color: #fff; border: none; padding: 10px; border-radius: 5px; }
+        .ws-btn.active { background-color: #2563eb; font-weight: bold; }
+        .card-custom { background-color: #334155; border: none; color: #fff; margin-bottom: 15px; }
+        .msg-user { background-color: #2563eb; color: white; padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; max-width: 80%; float: right; clear: both; }
+        .msg-bot { background-color: #1e293b; border: 1px solid #334155; color: white; padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; max-width: 85%; float: left; clear: both; }
+        .file-item { display: flex; justify-content: space-between; align-items: center; background: #0f172a; padding: 6px 10px; margin-bottom: 5px; border-radius: 4px; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+<div class="container-fluid">
+    <div class="row">
+        <!-- Лява лента: Работни пространства -->
+        <div class="col-md-2 sidebar">
+            <h5>🤖 N.I.K.I. CORE</h5>
+            <hr>
+            <h6>ПРОЕКТИ (WORKSPACES)</h6>
+            <div id="workspace-list">
+                {% for ws in workspaces %}
+                <button class="ws-btn {% if ws == current_ws %}active{% endif %}" onclick="switchWorkspace('{{ ws }}')">{{ ws }}</button>
+                {% endfor %}
+            </div>
+            <hr>
+            <button class="btn btn-outline-light btn-sm w-100" onclick="createNewWorkspace()">+ Нов Проект</button>
+            <br><br>
+            <h6>КАЧВАНЕ НА ДОКУМЕНТ</h6>
+            <form id="upload-form" enctype="multipart/form-data">
+                <input type="file" id="file-input" name="file" class="form-control form-control-sm mb-2">
+                <button type="button" class="btn btn-success btn-sm w-100" onclick="uploadDocument()">☁️ Синхронизирай</button>
+            </form>
+        </div>
 
-ЗАДЪЛЖИТЕЛЕН МИСЛОВЕН ПРОЦЕС:
-Преди всеки отговор, в тага <monologue> анализираш стъпките за постигане на целта на Админ.
+        <!-- Централен панел: Чатов интерфейс -->
+        <div class="col-md-7 main-content">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5>Активно пространство: <span class="text-primary">{{ current_ws }}</span></h5>
+                <span class="badge bg-success">ROOT Access Active</span>
+            </div>
+            
+            <div class="chat-box" id="chat-box">
+                <div class="msg-bot">Здравей, Аз съм N.I.K.I. Системата е напълно готова за работа.</div>
+            </div>
+
+            <div class="input-group">
+                <input type="text" id="user-input" class="form-control" placeholder="Въведете инструкция или команда към N.I.K.I..." onkeypress="if(event.key==='Enter') sendMessage()">
+                <button class="btn btn-primary" onclick="sendMessage()">🚀 Изпрати</button>
+            </div>
+        </div>
+
+        <!-- Дясна лента: База знания & Задачи -->
+        <div class="col-md-3 right-panel">
+            <div class="card card-custom">
+                <div class="card-body">
+                    <h6>🧠 ВЕРИФИЦИРАНИ ФАКТИ (FACTS)</h6>
+                    <ul id="facts-list" class="small ps-3 mb-0">
+                        {% for fact in facts %}
+                        <li>{{ fact }}</li>
+                        {% else %}
+                        <span class="text-muted">Няма намерени факти.</span>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+
+            <div class="card card-custom">
+                <div class="card-body">
+                    <h6>🎼 АКТИВНИ ЗАДАЧИ</h6>
+                    <ul id="tasks-list" class="small ps-3 mb-0">
+                        {% for task in tasks %}
+                        <li>{{ task }}</li>
+                        {% else %}
+                        <span class="text-muted">Няма намерени задачи.</span>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+
+            <div class="card card-custom">
+                <div class="card-body">
+                    <h6>📁 ФАЙЛОВЕ В БИБЛИОТЕКАТА</h6>
+                    <div id="files-list">
+                        {% for file in files %}
+                        <div class="file-item">
+                            <span class="text-truncate" style="max-width: 170px;">📄 {{ file.name }}</span>
+                            <button class="btn btn-danger btn-sm py-0 px-1" onclick="deleteFile('{{ file.name }}')">🗑️</button>
+                        </div>
+                        {% else %}
+                        <span class="text-muted">Няма качен документ.</span>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentWorkspace = "{{ current_ws }}";
+
+    function switchWorkspace(ws) {
+        window.location.href = "/?ws=" + ws;
+    }
+
+    function createNewWorkspace() {
+        let name = prompt("Въведете име на новото работно пространство (на латиница):");
+        if (name) {
+            fetch('/api/create_workspace', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: name })
+            }).then(() => window.location.href = "/?ws=" + name.toUpperCase());
+        }
+    }
+
+    function sendMessage() {
+        let input = document.getElementById('user-input');
+        let text = input.value.trim();
+        if (!text) return;
+
+        let chatBox = document.getElementById('chat-box');
+        chatBox.innerHTML += `<div class="msg-user">${text}</div>`;
+        input.value = '';
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        fetch('/api/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ message: text, workspace: currentWorkspace })
+        })
+        .then(res => res.json())
+        .then(data => {
+            chatBox.innerHTML += `<div class="msg-bot">${data.response}</div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+            if(data.reload) {
+                setTimeout(() => location.reload(), 1500);
+            }
+        });
+    }
+
+    function uploadDocument() {
+        let fileInput = document.getElementById('file-input');
+        if (!fileInput.files[0]) return alert("Моля, изберете файл!");
+
+        let formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('workspace', currentWorkspace);
+
+        let chatBox = document.getElementById('chat-box');
+        chatBox.innerHTML += `<div class="msg-bot">⏳ Обработвам, качвам и анализирам документа...</div>`;
+
+        fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            alert(data.message);
+            location.reload();
+        });
+    }
+
+    function deleteFile(fileName) {
+        if (confirm("Сигурни ли сте, че искате да изтриете файла '" + fileName + "'?")) {
+            fetch('/api/delete_file', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ file_name: fileName, workspace: currentWorkspace })
+            })
+            .then(res => res.json())
+            .then(data => {
+                alert(data.message);
+                location.reload();
+            });
+        }
+    }
+</script>
+</body>
+</html>
 """
 
-BG_TIMEZONE = timezone(timedelta(hours=3))
+@app.route('/')
+def index():
+    current_ws = request.args.get('ws', 'GENERAL').upper()
+    
+    # Извличане на наличните файлове
+    lib_path = f"{WORKSPACES_DIR}/{current_ws.lower()}/library"
+    raw_files = list_github_folder(lib_path)
+    files = [{"name": f["name"]} for f in raw_files if isinstance(f, dict) and f.get("type") == "file"]
 
-@app.route("/")
-def index_page():
-    return render_template("index.html")
+    # Извличане на факти
+    facts_path = f"{WORKSPACES_DIR}/{current_ws.lower()}/facts/verified_facts.json"
+    facts_str, _ = get_github_file(facts_path)
+    facts = json.loads(facts_str) if facts_str else []
 
-@app.route("/workspaces", methods=["GET", "POST"])
-def manage_workspaces():
-    if request.method == "POST":
-        ws_name = request.json.get("name", "").strip()
-        if ws_name:
-            paths, ws_clean = get_workspace_paths(ws_name)
-            build_vector_index_for_workspace(ws_clean)
-            return jsonify({"status": "success", "workspace": ws_clean, "all": get_all_workspaces()})
-        return jsonify({"status": "error", "message": "Невалидно име."})
-    
-    return jsonify({"workspaces": get_all_workspaces()})
+    # Извличане на задачи
+    tasks_path = f"{WORKSPACES_DIR}/{current_ws.lower()}/tasks/backlog.json"
+    tasks_str, _ = get_github_file(tasks_path)
+    tasks = json.loads(tasks_str) if tasks_str else []
 
-@app.route("/workspace_data/<ws_name>", methods=["GET"])
-def get_workspace_data(ws_name):
-    paths, ws_clean = get_workspace_paths(ws_name)
-    
-    facts, hypotheses = get_stored_facts_and_hypotheses(ws_clean)
-    tasks = get_tasks(ws_clean)
-    
-    files = []
-    if os.path.exists(paths["library"]):
-        files = [f for f in os.listdir(paths["library"]) if not os.path.isdir(os.path.join(paths["library"], f))]
-        
-    return jsonify({
-        "facts": facts,
-        "hypotheses": hypotheses,
-        "tasks": tasks,
-        "files": files
-    })
+    return render_template_string(HTML_TEMPLATE, 
+                                 workspaces=DEFAULT_WORKSPACES, 
+                                 current_ws=current_ws, 
+                                 files=files, 
+                                 facts=facts, 
+                                 tasks=tasks)
 
-@app.route("/upload", methods=["POST"])
-def upload_file():
-    ws_name = request.form.get("workspace", "general")
-    paths, ws_clean = get_workspace_paths(ws_name)
-    
-    if "file" not in request.files:
-        return jsonify({"status": "error", "message": "Няма прикачен файл."})
-    
-    file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"status": "error", "message": "Не е избран файл."})
-        
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in {".txt", ".pdf", ".docx"}:
-        return jsonify({"status": "error", "message": "Неподдържан формат."})
-        
-    # Пълна поддръжка на Кирилица, интервали и тирета!
-    clean_name = re.sub(r'[^\w\s\.\-\(\)]', '_', file.filename).strip()
-    filename = clean_name if clean_name else f"document{ext}"
-    
-    save_path = os.path.join(paths["library"], filename)
-    
+@app.route('/api/create_workspace', methods=['POST'])
+def create_workspace():
+    data = request.json
+    ws_name = data.get('name', '').upper().strip()
+    if ws_name and ws_name not in DEFAULT_WORKSPACES:
+        DEFAULT_WORKSPACES.append(ws_name)
+        facts_path = f"{WORKSPACES_DIR}/{ws_name.lower()}/facts/verified_facts.json"
+        save_github_file(facts_path, json.dumps([], ensure_ascii=False), f"Init ws {ws_name}")
+    return jsonify({"status": "ok"})
+
+@app.route('/api/upload', methods=['POST'])
+def upload():
+    if 'file' not in request.files:
+        return jsonify({"message": "Липсва файл"}), 400
+    file = request.files['file']
+    workspace = request.form.get('workspace', 'GENERAL').lower()
+
     file_bytes = file.read()
-    with open(save_path, "wb") as f:
-        f.write(file_bytes)
-    
+    file_name = file.filename
+
+    # Качване в библиотека
+    gh_path = f"{WORKSPACES_DIR}/{workspace}/library/{file_name}"
+    save_github_file(gh_path, file_bytes, f"N.I.K.I. Auto-Sync: {file_name}", is_binary=True)
+
+    # Авто-извличане на текст за анализиране
     extracted_text = ""
-    try:
-        if ext == ".txt":
-            extracted_text = file_bytes.decode("utf-8", errors="ignore")
-        elif ext == ".docx":
-            doc = docx.Document(save_path)
-            extracted_text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-        elif ext == ".pdf":
-            reader = PdfReader(save_path)
-            for page in reader.pages: extracted_text += (page.extract_text() or "") + "\n"
-    except Exception as e:
-        print(f"Грешка извличане текст: {e}")
+    if file_name.endswith('.docx'):
+        extracted_text = extract_docx_text(file_bytes)
+    elif file_name.endswith('.txt'):
+        extracted_text = file_bytes.decode('utf-8', errors='ignore')
 
-    relative_path = os.path.relpath(save_path, BASE_DIR)
-    uploaded = upload_file_to_github(relative_path, file_bytes)
+    if extracted_text:
+        system_prompt = "Ти си N.I.K.I. Анализирай текста и извлечи ключови факти и задачи. Върни ги ВИНАГИ в JSON формат: {\"facts\": [\"факт 1\"], \"tasks\": [\"задача 1\"]}"
+        ai_res = call_groq_llm([{"role": "user", "content": extracted_text[:4000]}], system_prompt)
+        try:
+            parsed = json.loads(ai_res)
+            
+            # Обновяване на факти
+            facts_path = f"{WORKSPACES_DIR}/{workspace}/facts/verified_facts.json"
+            facts_str, sha_f = get_github_file(facts_path)
+            facts = json.loads(facts_str) if facts_str else []
+            facts.extend(parsed.get("facts", []))
+            save_github_file(facts_path, json.dumps(facts, ensure_ascii=False, indent=2), "Update facts", sha=sha_f)
+
+            # Обновяване на задачи
+            tasks_path = f"{WORKSPACES_DIR}/{workspace}/tasks/backlog.json"
+            tasks_str, sha_t = get_github_file(tasks_path)
+            tasks = json.loads(tasks_str) if tasks_str else []
+            tasks.extend(parsed.get("tasks", []))
+            save_github_file(tasks_path, json.dumps(tasks, ensure_ascii=False, indent=2), "Update tasks", sha=sha_t)
+
+        except Exception as e:
+            print(f"Грешка при обработка с AI: {e}")
+
+    return jsonify({"message": f"Файлът '{file_name}' бе качен и анализиран успешно!"})
+
+@app.route('/api/delete_file', methods=['POST'])
+def delete_file():
+    data = request.json
+    file_name = data.get('file_name')
+    workspace = data.get('workspace', 'GENERAL').lower()
+
+    gh_path = f"{WORKSPACES_DIR}/{workspace}/library/{file_name}"
+    _, sha = get_github_file(gh_path)
     
-    build_vector_index_for_workspace(ws_clean)
+    if sha:
+        success = delete_github_file(gh_path, sha, f"N.I.K.I. Delete File: {file_name}")
+        if success:
+            return jsonify({"message": f"Файлът '{file_name}' беше изтрит успешно!"})
     
-    if extracted_text.strip():
-        extract_facts_and_tasks_from_file(ws_clean, filename, extracted_text)
-    
-    msg = f"Файлът '{filename}' е качен, анализиран и фактите/задачите са извлечени!" if uploaded else f"Файлът '{filename}' е качен локално и анализиран."
-    return jsonify({"status": "success", "message": msg})
+    return jsonify({"message": f"Грешка при изтриването на '{file_name}'"}), 400
 
-@app.route("/delete_file", methods=["POST"])
-def delete_file_route():
-    data = request.json or {}
-    ws_name = data.get("workspace", "general")
-    filename = data.get("filename", "")
-    
-    if delete_file_from_workspace(ws_name, filename):
-        return jsonify({"status": "success", "message": f"Файлът '{filename}' е изтрит успешно."})
-    return jsonify({"status": "error", "message": "Файлът не е намерен."})
-
-def run_autonomous_chat_loop(messages, client, max_auto_turns=3):
-    full_reply = ""
-    full_monologue = ""
-    turns = 0
-
-    while turns < max_auto_turns:
-        completion = client.chat.completions.create(
-            messages=messages,
-            model="llama-3.3-70b-versatile",
-            temperature=0.2
-        )
-        raw_response = completion.choices[0].message.content
-
-        monologue_match = re.search(r'<monologue>(.*?)</monologue>', raw_response, re.DOTALL)
-        if monologue_match:
-            full_monologue += ("\n" if full_monologue else "") + monologue_match.group(1).strip()
-
-        clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
-        full_reply += ("\n" if full_reply else "") + clean_reply
-
-        if completion.choices[0].finish_reason == "length":
-            turns += 1
-            messages.append({"role": "assistant", "content": raw_response})
-            messages.append({"role": "user", "content": "Продължи абсолютно автономно точно от мястото, докъдето спря."})
-        else:
-            break
-
-    return full_reply.strip(), full_monologue.strip()
-
-@app.route("/chat", methods=["POST"])
+@app.route('/api/chat', methods=['POST'])
 def chat():
-    if not client:
-        return jsonify({"reply": "⚠️ Липсва GROQ_API_KEY!", "monologue": "", "time": ""})
+    data = request.json
+    user_msg = data.get('message', '')
+    workspace = data.get('workspace', 'GENERAL').lower()
 
-    data = request.json or {}
-    user_message = data.get("message", "").strip()
-    current_ws = data.get("workspace", "general")
+    # Зареждане на контекста
+    facts_path = f"{WORKSPACES_DIR}/{workspace}/facts/verified_facts.json"
+    facts_str, _ = get_github_file(facts_path)
+    facts = json.loads(facts_str) if facts_str else []
+
+    system_prompt = f"Ти си N.I.K.I. - автономен AI асистент. Работиш в проект '{workspace.upper()}'. Известни факти за този проект: {json.dumps(facts, ensure_ascii=False)}. Отговаряй точно, компетентно и професионално на български език."
     
-    now_bg = datetime.now(BG_TIMEZONE)
+    # Запитване за авто-създаване на документ
+    if user_msg.lower().startswith("генерирай документ") or user_msg.lower().startswith("създай файл"):
+        doc_title = f"Документ_{workspace.upper()}"
+        doc_bytes = create_docx_file(doc_title, [user_msg, "Автоматично генерирано съдържание от N.I.K.I. CORE."])
+        file_name = f"{doc_title}.docx"
+        gh_path = f"{WORKSPACES_DIR}/{workspace}/library/{file_name}"
+        save_github_file(gh_path, doc_bytes, f"N.I.K.I. Auto-Created Doc: {file_name}", is_binary=True)
+        return jsonify({"response": f"📄 Успешно генерирах и качих документа **{file_name}** в Библиотеката!", "reload": True})
 
-    clean_msg = user_message.lower().strip()
-    if any(keyword in clean_msg for keyword in ["диагностика", "самодиагностика", "сканирай"]):
-        diag_report = run_self_diagnostics()
-        return jsonify({
-            "reply": diag_report,
-            "monologue": "Изпълних Python скрипта за пълна самодиагностика. Проверих API ключа, GitHub интеграцията, JSON базите и векторните индекси.",
-            "time": now_bg.strftime("%H:%M"),
-            "target_workspace": current_ws
-        })
+    ai_response = call_groq_llm([{"role": "user", "content": user_msg}], system_prompt)
+    return jsonify({"response": ai_response, "reload": False})
 
-    detected_ws = detect_workspace_from_query(user_message)
-    target_ws = detected_ws if detected_ws else current_ws
-
-    if user_message.lower().startswith("изтрий файл:"):
-        target_filename = user_message[12:].strip()
-        if delete_file_from_workspace(target_ws, target_filename):
-            return jsonify({
-                "reply": f"🗑️ Файлът '{target_filename}' беше изтрит от библиотеката и GitHub.",
-                "monologue": "Премахнах указания файл от локалната библиотека, изтрих го от репозиторието в GitHub и пренастроих векторния индекс.",
-                "time": now_bg.strftime("%H:%M"),
-                "target_workspace": target_ws
-            })
-
-    if user_message.lower().startswith("задача:"):
-        task_text = user_message[7:].strip()
-        add_task(target_ws, task_text)
-    elif user_message.lower().startswith("готова задача:"):
-        task_text = user_message[14:].strip()
-        complete_task(target_ws, task_text)
-
-    current_time_info = now_bg.strftime("%d.%m.%Y %H:%M")
-
-    if user_message.lower().startswith("факт:"):
-        save_fact_or_hypothesis(target_ws, user_message[5:].strip(), "fact")
-    elif user_message.lower().startswith("хипотеза:"):
-        save_fact_or_hypothesis(target_ws, user_message[9:].strip(), "hypothesis")
-
-    retrieved_context = search_relevant_knowledge(target_ws, user_message)
-    facts, hypotheses = get_stored_facts_and_hypotheses(target_ws)
-    tasks = get_tasks(target_ws)
-
-    facts_str = "\n".join([f"- {f['content']}" for f in facts[-5:]]) if facts else "Няма факти."
-    hypo_str = "\n".join([f"- {h['content']}" for h in hypotheses[-5:]]) if hypotheses else "Няма хипотези."
-    
-    pending_tasks = [f"• {t['task']}" for t in tasks if t['status'] == 'PENDING']
-    tasks_str = "\n".join(pending_tasks) if pending_tasks else "Няма активни задачи."
-
-    messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
-    
-    context_prefix = (
-        f"[АКТИВЕН WORKSPACE: {target_ws.upper()}]\n"
-        f"[ВРЕМЕ: {current_time_info}]\n"
-        f"[ФАКТИ (+100)]:\n{facts_str}\n\n"
-        f"[АКТИВНИ ЗАДАЧИ (+80)]:\n{tasks_str}\n\n"
-        f"[ИЗВЛЕЧЕНИ ЗНАНИЯ]:\n{retrieved_context}\n\n"
-    )
-    
-    history_from_file = get_chat_history(target_ws)
-    for msg in history_from_file[-8:]:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-
-    messages.append({"role": "user", "content": f"{context_prefix}[ИЗТОЧНИК: АДМИН]\n{user_message}"})
-
-    try:
-        clean_reply, monologue = run_autonomous_chat_loop(messages, client)
-        
-        save_chat_message(target_ws, "user", user_message)
-        save_chat_message(target_ws, "assistant", clean_reply)
-
-        return jsonify({
-            "reply": clean_reply, 
-            "monologue": monologue, 
-            "time": now_bg.strftime("%H:%M"),
-            "target_workspace": target_ws
-        })
-    except Exception as e:
-        return jsonify({"reply": f"Грешка: {e}", "monologue": "", "time": now_bg.strftime("%H:%M")})
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
