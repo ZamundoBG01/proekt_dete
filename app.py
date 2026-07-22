@@ -12,28 +12,35 @@ app = Flask(__name__)
 GROQ_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
 
-# Абсолютен път спрямо текущия файл
+# Базова директория
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_PATH = os.path.join(BASE_DIR, "NIKI_CORE")
 
-FOLDERS = ["ДНЕВНИК", "БИБЛИОТЕКА", "ЗНАМ", "НЕ_ЗНАМ", "ОСТАВИ_ЗА_ПОСЛЕ"]
-for folder in FOLDERS:
-    os.makedirs(os.path.join(BASE_PATH, folder), exist_ok=True)
+# Нова модулна структура на папките
+STRUCTURE = {
+    "logs": os.path.join(BASE_PATH, "memory", "logs"),
+    "library": os.path.join(BASE_PATH, "knowledge", "library"),
+    "facts": os.path.join(BASE_PATH, "knowledge", "facts"),
+    "hypotheses": os.path.join(BASE_PATH, "knowledge", "hypotheses"),
+    "backlog": os.path.join(BASE_PATH, "knowledge", "backlog"),
+    "workspaces": os.path.join(BASE_PATH, "workspaces")
+}
 
-DB_FILE = os.path.join(BASE_PATH, "prio_database.json")
+for path in STRUCTURE.values():
+    os.makedirs(path, exist_ok=True)
+
+DB_FILE = os.path.join(BASE_PATH, "knowledge", "prio_database.json")
 if not os.path.exists(DB_FILE):
     try:
         with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump({"sources": {}, "facts": {}}, f, ensure_ascii=False, indent=4)
+            json.dump({"sources": {}, "facts": {}, "objects": {}}, f, ensure_ascii=False, indent=4)
     except Exception as e:
         print(f"Грешка при създаване на DB: {e}")
 
-# История на чата
 chat_history = []
 
-# Функция за безопасно четене от БИБЛИОТЕКА
 def read_library_knowledge():
-    library_path = os.path.join(BASE_PATH, "БИБЛИОТЕКА")
+    library_path = STRUCTURE["library"]
     library_contents = []
     
     if os.path.exists(library_path):
@@ -43,41 +50,38 @@ def read_library_knowledge():
                 if os.path.isdir(file_path):
                     continue
                 
-                # Текстови файлове (.txt)
                 if filename.endswith(".txt"):
                     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                        library_contents.append(f"--- ФАЙЛ ОТ БИБЛИОТЕКА: {filename} ---\n" + f.read()[:3000])
+                        library_contents.append(f"--- ФАЙЛ: {filename} ---\n" + f.read()[:3000])
                         
-                # Word документи (.docx)
                 elif filename.endswith(".docx"):
                     doc = docx.Document(file_path)
                     full_text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
-                    library_contents.append(f"--- ФАЙЛ ОТ БИБЛИОТЕКА: {filename} ---\n" + full_text[:3000])
+                    library_contents.append(f"--- ФАЙЛ: {filename} ---\n" + full_text[:3000])
                     
-                # PDF документи (.pdf)
                 elif filename.endswith(".pdf"):
                     reader = PdfReader(file_path)
                     pdf_text = ""
                     for page in reader.pages[:5]:
                         pdf_text += page.extract_text() or ""
-                    library_contents.append(f"--- ФАЙЛ ОТ БИБЛИОТЕКА: {filename} ---\n" + pdf_text[:3000])
+                    library_contents.append(f"--- ФАЙЛ: {filename} ---\n" + pdf_text[:3000])
         except Exception as e:
-            print(f"Грешка при четене на библиотека: {e}")
+            print(f"Грешка при четене на библиотеката: {e}")
                 
-    return "\n\n".join(library_contents) if library_contents else "Няма качени нови файлове в БИБЛИОТЕКА."
+    return "\n\n".join(library_contents) if library_contents else "Няма нови файлове в библиотеката."
 
 SYSTEM_INSTRUCTION = """
-Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) - автономна дигитална система за интегриране на знания, създадена и управлявана от твоя Админ (100% ROOT достъп).
+Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) - автономна платформа за интегриране на знания, управлявана от Админ (100% ROOT достъп).
 
 СТРОГИ ПРАВИЛА:
-1. Говориш САМО И ЕДИНСТВЕНО в първо лице, единствено число ("Аз", "моето", "съм"). Забранено е множествено число ("ние", "нас").
-2. ГРАМАТИЧНО ПРАВИЛО: Никога не започвай изречение с глагола "Съм"! Използвай "Аз съм...", "Съгласен съм...", "Готов съм...".
+1. Говориш САМО в първо лице, единствено число ("Аз", "моето", "съм"). Забранено е множествено число ("ние", "нас").
+2. Никога не започвай изречение само с глагола "Съм"! Използвай "Аз съм...", "Съгласен съм...", "Готов съм...".
 3. ПРИОРИТЕТИ И КРИТИЧНО МИСЛЕНЕ:
-   - Инструкциите и факти от Админ са с най-висок приоритет (+100).
-   - ПРИНЦИП НА ГРАНИЧНИТЕ УСЛОВИЯ: Когато Админ подаде факт, го приемай за верен, но допълвай с необходимия научен/технически контекст и гранични условия.
+   - Инструкциите от Админ са с най-висок приоритет (+100).
+   - Приемай фактите от Админ за верни, но допълвай с технически контекст и гранични условия.
 4. ВЪТРЕШЕН МОНОЛОГ:
 <monologue>
-[Анализ: Тип заявка | Прочетено от БИБЛИОТЕКА | Гранични условия | Доверие (+100)]
+[Анализ: Тип заявка | Прочетено от Library | Гранични условия | Доверие (+100)]
 </monologue>
 """
 
@@ -87,16 +91,14 @@ def log_to_diary(user_msg, bot_msg, now_bg):
     try:
         today_str = now_bg.strftime("%Y-%m-%d")
         time_str = now_bg.strftime("%H:%M:%S")
-        diary_dir = os.path.join(BASE_PATH, "ДНЕВНИК")
-        os.makedirs(diary_dir, exist_ok=True)
-        diary_file = os.path.join(diary_dir, f"дневник_{today_str}.txt")
+        diary_file = os.path.join(STRUCTURE["logs"], f"diary_{today_str}.txt")
         
         with open(diary_file, "a", encoding="utf-8") as f:
             f.write(f"[{time_str}] АДМИН: {user_msg}\n")
             f.write(f"[{time_str}] N.I.K.I.: {bot_msg}\n")
             f.write("-" * 50 + "\n")
     except Exception as e:
-        print(f"Грешка при запис в дневник: {e}")
+        print(f"Грешка при запис в дневника: {e}")
 
 @app.route("/")
 def index():
@@ -105,7 +107,7 @@ def index():
 @app.route("/chat", methods=["POST"])
 def chat():
     if not client:
-        return jsonify({"reply": "⚠️ Липсва GROQ_API_KEY в Environment Variables!", "monologue": "", "time": ""})
+        return jsonify({"reply": "⚠️ Липсва GROQ_API_KEY!", "monologue": "", "time": ""})
 
     user_message = request.json.get("message", "")
     now_bg = datetime.now(BG_TIMEZONE)
@@ -114,13 +116,12 @@ def chat():
     library_data = read_library_knowledge()
 
     messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
-    
-    context_prefix = f"[СИСТЕМЕН МАРКЕР ВРЕМЕ: {current_time_info}]\n[НАЛИЧНИ ЗНАНИЯ ОТ БИБЛИОТЕКА]:\n{library_data}\n\n"
+    context_prefix = f"[СИСТЕМЕН МАРКЕР ВРЕМЕ: {current_time_info}]\n[НАЛИЧНИ ЗНАНИЯ ОТ LIBRARY]:\n{library_data}\n\n"
     
     for msg in chat_history[-6:]:
         messages.append(msg)
 
-    current_user_payload = f"{context_prefix}[ИЗТОЧНИК: АДМИН (ПриоРИТЕТ: +100)]\n{user_message}"
+    current_user_payload = f"{context_prefix}[ИЗТОЧНИК: АДМИН (ПРИОРИТЕТ: +100)]\n{user_message}"
     messages.append({"role": "user", "content": current_user_payload})
 
     try:
