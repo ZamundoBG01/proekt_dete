@@ -32,7 +32,7 @@
 
         .panel-card { background: #0b132b; border: 1px solid #3a506b; border-radius: 8px; padding: 12px; }
         .panel-title { font-size: 0.85rem; font-weight: bold; color: #4cc9f0; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
-        .panel-list { font-size: 0.8rem; color: #c7d2fe; margin: 0; padding-left: 15px; }
+        .panel-list { font-size: 0.8rem; color: #c7d2fe; margin: 0; padding-left: 0; list-style: none; }
 
         .chat-input-area { padding: 15px; background: #1c2541; border-top: 1px solid #3a506b; display: flex; gap: 10px; }
         .chat-input { background: #0b132b; border: 1px solid #3a506b; color: white; border-radius: 8px; padding: 10px; flex: 1; }
@@ -117,14 +117,32 @@
         const data = await res.json();
 
         const factsList = document.getElementById("factsList");
-        factsList.innerHTML = data.facts.length ? data.facts.map(f => `<li>${f.content}</li>`).join('') : '<li>Няма регистрирани факти.</li>';
+        factsList.innerHTML = data.facts.length ? data.facts.map(f => `<li class="mb-1">• ${f.content}</li>`).join('') : '<li>Няма регистрирани факти.</li>';
 
         const tasksList = document.getElementById("tasksList");
         const pending = data.tasks.filter(t => t.status === "PENDING");
-        tasksList.innerHTML = pending.length ? pending.map(t => `<li>${t.task}</li>`).join('') : '<li>Няма активни задачи.</li>';
+        tasksList.innerHTML = pending.length ? pending.map(t => `<li class="mb-1">• ${t.task}</li>`).join('') : '<li>Няма активни задачи.</li>';
 
         const filesList = document.getElementById("filesList");
-        filesList.innerHTML = data.files.length ? data.files.map(f => `<li>${f}</li>`).join('') : '<li>Няма качени файлове.</li>';
+        filesList.innerHTML = data.files.length ? data.files.map(f => 
+            `<li class="d-flex justify-content-between align-items-center mb-1">
+                <span class="text-truncate" style="max-width: 210px;" title="${f}">📄 ${f}</span>
+                <i class="fa-solid fa-trash text-danger ms-2" style="cursor:pointer;" title="Изтрий файл" onclick="deleteFile('${f}')"></i>
+            </li>`
+        ).join('') : '<li>Няма качени файлове.</li>';
+    }
+
+    async function deleteFile(filename) {
+        if (!confirm(`Сигурни ли сте, че искате да изтриете '${filename}'?`)) return;
+        
+        const res = await fetch("/delete_file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace: activeWorkspace, filename: filename })
+        });
+        const data = await res.json();
+        alert(data.message);
+        loadWorkspaceData();
     }
 
     async function sendMessage() {
