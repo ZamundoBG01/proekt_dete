@@ -41,7 +41,8 @@ def get_workspace_paths(ws_name="general"):
         "library": os.path.join(ws_base, "library"),
         "facts": os.path.join(ws_base, "facts"),
         "hypotheses": os.path.join(ws_base, "hypotheses"),
-        "tasks": os.path.join(ws_base, "tasks")
+        "tasks": os.path.join(ws_base, "tasks"),
+        "chat": os.path.join(ws_base, "chat")
     }
     for p in paths.values():
         os.makedirs(p, exist_ok=True)
@@ -185,6 +186,30 @@ def complete_task(ws_name, task_desc):
             json.dump(tasks, f, ensure_ascii=False, indent=2)
     return updated
 
+# --- ПОСТОЯННА ПАМЕТ ЗА ЧАТА (PERSISTENT CHAT HISTORY) ---
+def get_chat_history(ws_name):
+    paths, _ = get_workspace_paths(ws_name)
+    chat_file = os.path.join(paths["chat"], "chat_history.json")
+    if os.path.exists(chat_file):
+        try:
+            with open(chat_file, "r", encoding="utf-8") as f: return json.load(f)
+        except: return []
+    return []
+
+def save_chat_message(ws_name, role, content):
+    paths, _ = get_workspace_paths(ws_name)
+    chat_file = os.path.join(paths["chat"], "chat_history.json")
+    history = get_chat_history(ws_name)
+    history.append({
+        "role": role,
+        "content": content,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+    # Пазим последните 50 съобщения, за да не претоварваме контекста
+    history = history[-50:]
+    with open(chat_file, "w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
 SYSTEM_INSTRUCTION = """
 Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) - автономна платформа за интегриране на знания, управлявана от Админ (100% ROOT достъп).
 
@@ -194,12 +219,11 @@ SYSTEM_INSTRUCTION = """
 3. Приоритети: Фактите (+100), Задачи/Backlog (+80).
 4. Задължителен ВЪТРЕШЕН МОНОЛОГ:
 <monologue>
-[Анализ: Workspace | База Факти (+100) | Активни Задачи | Контекст]
+[Анализ: Workspace | База Факти (+100) | Постоянна Памет | Активни Задачи | Контекст]
 </monologue>
 """
 
 BG_TIMEZONE = timezone(timedelta(hours=3))
-chat_history = {}
 
 @app.route("/")
 def index_page():
@@ -286,11 +310,10 @@ def chat():
         f"[ИЗВЛЕЧЕНИ ЗНАНИЯ]:\n{retrieved_context}\n\n"
     )
     
-    if ws_name not in chat_history:
-        chat_history[ws_name] = []
-        
-    for msg in chat_history[ws_name][-6:]:
-        messages.append(msg)
+    # Зареждане на запазената история от файла
+    history_from_file = get_chat_history(ws_name)
+    for msg in history_from_file[-8:]:
+        messages.append({"role": msg["role"], "content": msg["content"]})
 
     messages.append({"role": "user", "content": f"{context_prefix}[ИЗТОЧНИК: АДМИН]\n{user_message}"})
 
@@ -307,10 +330,11 @@ def chat():
         if monologue_match:
             monologue = monologue_match.group(1).strip()
             
-        clean_reply = re.sub(r'<monologue>.*.*?<\/monologue>', '', raw_response, flags=re.DOTALL).strip()
+        clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
         
-        chat_history[ws_name].append({"role": "user", "content": user_message})
-        chat_history[ws_name].append({"role": "assistant", "content": clean_reply})
+        # Записване на новото съобщение и отговора в постоянната памет
+        save_chat_message(ws_name, "user", user_message)
+        save_chat_message(ws_name, "assistant", clean_reply)
 
         return jsonify({
             "reply": clean_reply, 
