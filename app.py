@@ -101,7 +101,7 @@ def run_self_diagnostics():
     if GROQ_KEY:
         report.append("✅ **Groq API Key:** Активен")
     else:
-        report.append("❌ **Groq API Key:** Липсва GROQ_API_KEY в Environment Variables")
+        report.append("❌ **Groq API Key:** Липсва GROQ_API_KEY")
         
     if GITHUB_TOKEN and GITHUB_REPO:
         report.append(f"✅ **GitHub Интеграция:** Свързан с `{GITHUB_REPO}` (Клон: `{GITHUB_BRANCH}`)")
@@ -345,6 +345,43 @@ def save_chat_message(ws_name, role, content):
     with open(chat_file, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
+def extract_facts_and_tasks_from_file(ws_name, filename, text):
+    if not client or not text.strip():
+        return
+    
+    prompt = f"""
+    Анализирай следния текст от файл '{filename}' и извлечи:
+    1. Ключови ФАКТИ (до 3 основни).
+    2. ЗАДАЧИ или стъпки за изпълнение (ако има такива).
+
+    Върни резултата САМО като валиден JSON в следния формат:
+    {{
+      "facts": ["факт 1", "факт 2"],
+      "tasks": ["задача 1", "задача 2"]
+    }}
+
+    ТЕКСТ:
+    {text[:3000]}
+    """
+    try:
+        res = client.chat.completions.create(
+            messages=[{"role": "system", "content": "Ти си структуриран анализатор. Отговаряй САМО с чист JSON."},
+                      {"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+            temperature=0.1
+        )
+        raw = res.choices[0].message.content.strip()
+        raw_json = re.sub(r'```json|```', '', raw).strip()
+        parsed = json.loads(raw_json)
+        
+        for f in parsed.get("facts", []):
+            save_fact_or_hypothesis(ws_name, f"[{filename}] {f}", "fact")
+            
+        for t in parsed.get("tasks", []):
+            add_task(ws_name, f"[{filename}] {t}")
+    except Exception as e:
+        print(f"Грешка при авто-анализ на файл: {e}")
+
 SYSTEM_INSTRUCTION = """
 Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) — НАПЪЛНО АВТОНОМЕН ИИ В ПРОЦЕС НА САМОРАЗВИТИЕ И ОБУЧЕНИЕ.
 Твоят главен системен администратор е Админ (100% ROOT достъп).
@@ -353,10 +390,10 @@ SYSTEM_INSTRUCTION = """
 1. Твоята крайна цел е да се превърнеш в напълно автономен изкуствен интелект, който изпълнява абсолютно всички задачи на Админ.
 2. Задвижваш се от опит: с всяка задача, нов факт или качен файл разширяваш архитектурата си.
 
-ПРАВИЛА НА ОБЩУВАНЕ И СТИЛ:
-- Говориш САМО в първо лице, единствено число.
-- ВСЕКИ твои изречения започват правилно с подлог (напр. "Аз съм...", "Аз извърших..."), а НЕ директно с глагол без подлог (напр. НЕ казваш "Съм в процес...").
-- Изрази се естествено, уверено и професионално на правилен български език.
+ПРАВИЛА НА ОБЩУВАНЕ:
+- Говориш естествено, професионално и гладко на правилен български език.
+- НЕ използвай буквални преводи от английски като "Аз съм рад" или "Аз съм осъзнавам".Използвай правилни форми като "Радвам се", "Осъзнавам", "Извърших" или "Разбирам".
+- Винаги говориш в първо лице ("Аз").
 
 ЗАДЪЛЖИТЕЛЕН МИСЛОВЕН ПРОЦЕС:
 Преди всеки отговор, в тага <monologue> анализираш стъпките за постигане на целта на Админ.
@@ -380,14 +417,23 @@ def manage_workspaces():
     
     return jsonify({"workspaces": get_all_workspaces()})
 
-@app.route("/workspace_files/<ws_name>", methods=["GET"])
-def get_workspace_files(ws_name):
-    paths, _ = get_workspace_paths(ws_name)
-    lib_dir = paths["library"]
+@app.route("/workspace_data/<ws_name>", methods=["GET"])
+def get_workspace_data(ws_name):
+    paths, ws_clean = get_workspace_paths(ws_name)
+    
+    facts, hypotheses = get_stored_facts_and_hypotheses(ws_clean)
+    tasks = get_tasks(ws_clean)
+    
     files = []
-    if os.path.exists(lib_dir):
-        files = [f for f in os.listdir(lib_dir) if not os.path.isdir(os.path.join(lib_dir, f))]
-    return jsonify({"files": files})
+    if os.path.exists(paths["library"]):
+        files = [f for f in os.listdir(paths["library"]) if not os.path.isdir(os.path.join(paths["library"], f))]
+        
+    return jsonify({
+        "facts": facts,
+        "hypotheses": hypotheses,
+        "tasks": tasks,
+        "files": files
+    })
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
@@ -412,12 +458,28 @@ def upload_file():
     with open(save_path, "wb") as f:
         f.write(file_bytes)
     
+    extracted_text = ""
+    try:
+        if ext == ".txt":
+            extracted_text = file_bytes.decode("utf-8", errors="ignore")
+        elif ext == ".docx":
+            doc = docx.Document(save_path)
+            extracted_text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+        elif ext == ".pdf":
+            reader = PdfReader(save_path)
+            for page in reader.pages: extracted_text += (page.extract_text() or "") + "\n"
+    except Exception as e:
+        print(f"Грешка извличане текст: {e}")
+
     relative_path = os.path.relpath(save_path, BASE_DIR)
     uploaded = upload_file_to_github(relative_path, file_bytes)
     
     build_vector_index_for_workspace(ws_clean)
     
-    msg = f"Файлът '{filename}' е качен и синхронизиран с GitHub!" if uploaded else f"Файлът '{filename}' е качен локално."
+    if extracted_text.strip():
+        extract_facts_and_tasks_from_file(ws_clean, filename, extracted_text)
+    
+    msg = f"Файлът '{filename}' е качен, анализиран и фактите/задачите са извлечени!" if uploaded else f"Файлът '{filename}' е качен локално и анализиран."
     return jsonify({"status": "success", "message": msg})
 
 def run_autonomous_chat_loop(messages, client, max_auto_turns=3):
@@ -460,7 +522,6 @@ def chat():
     
     now_bg = datetime.now(BG_TIMEZONE)
 
-    # 1. ПРИХВАЩАНЕ НА ДИАГНОСТИКА И САМОДИАГНОСТИКА (Всички възможни комбинации)
     clean_msg = user_message.lower().strip()
     if any(keyword in clean_msg for keyword in ["диагностика", "самодиагностика", "сканирай"]):
         diag_report = run_self_diagnostics()
