@@ -150,7 +150,6 @@ def save_fact_or_hypothesis(ws_name, text, category="fact"):
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# --- BACKLOG УПРАВЛЕНИЕ НА ЗАДАЧИ ---
 def get_tasks(ws_name):
     paths, _ = get_workspace_paths(ws_name)
     tasks_file = os.path.join(paths["tasks"], "backlog.json")
@@ -186,7 +185,6 @@ def complete_task(ws_name, task_desc):
             json.dump(tasks, f, ensure_ascii=False, indent=2)
     return updated
 
-# --- ПОСТОЯННА ПАМЕТ ЗА ЧАТА (PERSISTENT CHAT HISTORY) ---
 def get_chat_history(ws_name):
     paths, _ = get_workspace_paths(ws_name)
     chat_file = os.path.join(paths["chat"], "chat_history.json")
@@ -205,22 +203,33 @@ def save_chat_message(ws_name, role, content):
         "content": content,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
-    # Пазим последните 50 съобщения, за да не претоварваме контекста
     history = history[-50:]
     with open(chat_file, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
+# --- ИНСТРУКЦИЯ С ВЕРИГА ОТ МИСЛИ (CHAIN-OF-THOUGHT REASONING) ---
 SYSTEM_INSTRUCTION = """
 Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) - автономна платформа за интегриране на знания, управлявана от Админ (100% ROOT достъп).
 
 ПРАВИЛА:
 1. Говориш САМО в първо лице, единствено число ("Аз", "моето", "съм").
 2. Никога не започвай изречение само с глагола "Съм"!
-3. Приоритети: Фактите (+100), Задачи/Backlog (+80).
-4. Задължителен ВЪТРЕШЕН МОНОЛОГ:
+3. Приоритети: Фактите (+100), Задачи (+80), Извлечени Знания (+70).
+
+4. ЗАДЪЛЖИТЕЛЕН СТЪПКТОВ МИСЛОВЕН ПРОЦЕС (CHAIN-OF-THOUGHT REASONING):
+Преди да отговориш на потребителя, ДЛЪЖЕН си да преминеш през двуетапен мисловен процес вътре в тага <monologue>:
+
 <monologue>
-[Анализ: Workspace | База Факти (+100) | Постоянна Памет | Активни Задачи | Контекст]
+1. [Анализ на въпроса]: Какво точно иска Админ?
+2. [Проверка на данни]: Какви Факти (+100), Задачи (+80) и Качени Документи имам по темата?
+3. [Логическа верига / План]:
+   - Стъпка 1: ...
+   - Стъпка 2: ...
+   - Стъпка 3: ...
+4. [Заключение]: Какъв е най-прецизният и логичен отговор?
 </monologue>
+
+След тага <monologue> даваш твоя окончателен, ясен и структуриран отговор за Админ.
 """
 
 BG_TIMEZONE = timezone(timedelta(hours=3))
@@ -273,7 +282,6 @@ def chat():
     user_message = data.get("message", "")
     ws_name = data.get("workspace", "general")
     
-    # Обработка на команди за задачи
     if user_message.lower().startswith("задача:"):
         task_text = user_message[7:].strip()
         add_task(ws_name, task_text)
@@ -310,7 +318,6 @@ def chat():
         f"[ИЗВЛЕЧЕНИ ЗНАНИЯ]:\n{retrieved_context}\n\n"
     )
     
-    # Зареждане на запазената история от файла
     history_from_file = get_chat_history(ws_name)
     for msg in history_from_file[-8:]:
         messages.append({"role": msg["role"], "content": msg["content"]})
@@ -321,7 +328,7 @@ def chat():
         completion = client.chat.completions.create(
             messages=messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.3
+            temperature=0.2
         )
         raw_response = completion.choices[0].message.content
         
@@ -332,7 +339,6 @@ def chat():
             
         clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
         
-        # Записване на новото съобщение и отговора в постоянната памет
         save_chat_message(ws_name, "user", user_message)
         save_chat_message(ws_name, "assistant", clean_reply)
 
