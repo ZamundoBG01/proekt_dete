@@ -3,167 +3,356 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Проект ДЕТЕТО v5.5</title>
+    <title>N.I.K.I. OS - Knowledge Core</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
-        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-        body { background-color: #131314; color: #e3e3e3; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
-        
-        header { background: #1e1f20; padding: 15px 20px; border-bottom: 1px solid #2e2f31; text-align: center; }
-        header h1 { margin: 0; font-size: 1.2rem; color: #e3e3e3; font-weight: 500; }
-
-        #chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; max-width: 800px; width: 100%; margin: 0 auto; }
-        
-        .msg-row { display: flex; flex-direction: column; width: 100%; position: relative; }
-        .user-row { align-items: flex-end; }
-        .bot-row { align-items: flex-start; }
-
-        .msg-box { display: flex; flex-direction: column; max-width: 80%; position: relative; }
-
-        .msg-content { padding: 12px 16px 22px 16px; border-radius: 18px; font-size: 1rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-        .user-msg { background-color: #2b2c2f; color: #ffffff; border-bottom-right-radius: 4px; }
-        .bot-msg { background-color: #1e1f20; color: #e3e3e3; border: 1px solid #2e2f31; border-bottom-left-radius: 4px; }
-
-        /* Дискретен часовник долу вдясно (Като във Viber / WhatsApp) */
-        .time-tag { font-size: 0.7rem; color: #8e918f; position: absolute; bottom: 5px; right: 12px; user-select: none; pointer-events: none; }
-
-        .monologue-box { background-color: #1a1915; border: 1px solid #4d3d1e; color: #f2c97d; padding: 10px 14px; border-radius: 12px; font-size: 0.88rem; max-width: 80%; border-left: 4px solid #f2c97d; margin-bottom: 6px; }
-        .monologue-title { font-weight: bold; margin-bottom: 4px; }
-
-        .input-area { padding: 15px 20px; background: #131314; display: flex; justify-content: center; }
-        .input-wrapper { display: flex; align-items: flex-end; background: #1e1f20; border: 1px solid #3c4043; border-radius: 24px; padding: 8px 16px; width: 100%; max-width: 800px; }
-        .input-wrapper:focus-within { border-color: #a8c7fa; }
-
-        textarea#user-input {
-            flex: 1;
-            background: transparent;
-            border: none;
-            outline: none;
-            color: #e3e3e3;
-            font-size: 1rem;
-            line-height: 1.4;
-            padding: 8px 0;
-            resize: none;
-            min-height: 24px;
-            max-height: 140px;
-            overflow-y: auto;
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: #111827;
+            --accent-color: #3b82f6;
+            --accent-hover: #2563eb;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --border-color: #1f2937;
+            --monologue-bg: rgba(59, 130, 246, 0.08);
+            --monologue-border: rgba(59, 130, 246, 0.3);
         }
 
-        button#send-btn {
-            background: #a8c7fa;
-            color: #040e15;
-            border: none;
-            border-radius: 50%;
-            width: 36px;
-            height: 36px;
-            margin-left: 10px;
-            cursor: pointer;
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Header */
+        header {
+            background-color: var(--card-bg);
+            padding: 15px 25px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo-container {
             display: flex;
             align-items: center;
+            gap: 12px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            background-color: #10b981;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #10b981;
+        }
+
+        .title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: #ffffff;
+        }
+
+        .subtitle {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Chat Container */
+        #chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 25px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .message {
+            display: flex;
+            flex-direction: column;
+            max-width: 80%;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            align-self: flex-end;
+        }
+
+        .message.bot {
+            align-self: flex-start;
+        }
+
+        .bubble {
+            padding: 14px 18px;
+            border-radius: 12px;
+            font-size: 0.98rem;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        .user .bubble {
+            background-color: var(--accent-color);
+            color: #ffffff;
+            border-bottom-right-radius: 2px;
+        }
+
+        .bot .bubble {
+            background-color: var(--card-bg);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            border-bottom-left-radius: 2px;
+        }
+
+        .timestamp {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+            align-self: flex-end;
+        }
+
+        /* Monologue Box */
+        .monologue-box {
+            background-color: var(--monologue-bg);
+            border-left: 3px solid var(--accent-color);
+            padding: 10px 14px;
+            margin-bottom: 8px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: #93c5fd;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        /* Input Controls */
+        .input-area {
+            background-color: var(--card-bg);
+            padding: 15px 25px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .file-upload-btn {
+            background-color: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
             justify-content: center;
-            font-weight: bold;
-            flex-shrink: 0;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .file-upload-btn:hover {
+            color: var(--accent-color);
+            border-color: var(--accent-color);
+            background-color: rgba(59, 130, 246, 0.1);
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        #message-input {
+            flex: 1;
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            padding: 12px 18px;
+            border-radius: 25px;
+            color: var(--text-main);
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #message-input:focus {
+            border-color: var(--accent-color);
+        }
+
+        .send-btn {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background-color 0.2s;
+        }
+
+        .send-btn:hover {
+            background-color: var(--accent-hover);
+        }
+
+        /* Notifications */
+        #notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            background-color: #10b981;
+            color: white;
+            font-size: 0.9rem;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
     </style>
 </head>
 <body>
+
+    <div id="notification"></div>
+
     <header>
-        <h1>🤖 ПРОЕКТ ДЕТЕТО (v5.5)</h1>
+        <div class="logo-container">
+            <div class="status-dot"></div>
+            <div>
+                <div class="title">N.I.K.I. OS</div>
+                <div class="subtitle">Neural Intelligent Knowledge Integrator (v3.0 RAG)</div>
+            </div>
+        </div>
     </header>
 
     <div id="chat-container">
-        <div class="msg-row bot-row">
-            <div class="msg-box">
-                <div class="msg-content bot-msg">Здравей, Татко! Аз съм тук. Всичко е настроено правилно.</div>
-            </div>
+        <div class="message bot">
+            <div class="bubble">Привет, Админ! Векторната памет е активна. Готов съм да отговарям на въпроси и да индексирам нови файлове.</div>
         </div>
     </div>
 
     <div class="input-area">
-        <div class="input-wrapper">
-            <textarea id="user-input" placeholder="Напишете съобщение..." rows="1"></textarea>
-            <button id="send-btn" onclick="sendMessage()">➔</button>
-        </div>
+        <label for="file-input" class="file-upload-btn" title="Качи документ (.txt, .pdf, .docx)">
+            <i class="fa-solid fa-paperclip"></i>
+        </label>
+        <input type="file" id="file-input" accept=".txt,.pdf,.docx" onchange="uploadFile()">
+
+        <input type="text" id="message-input" placeholder="Задай въпрос на N.I.K.I..." onkeypress="handleKeyPress(event)">
+
+        <button class="send-btn" onclick="sendMessage()">
+            <i class="fa-solid fa-paper-plane"></i>
+        </button>
     </div>
 
     <script>
-        const tx = document.getElementById("user-input");
-        const container = document.getElementById("chat-container");
+        function showNotification(msg, isError = false) {
+            const notif = document.getElementById('notification');
+            notif.innerText = msg;
+            notif.style.backgroundColor = isError ? '#ef4444' : '#10b981';
+            notif.style.display = 'block';
+            setTimeout(() => { notif.style.display = 'none'; }, 4000);
+        }
 
-        tx.addEventListener("input", function() {
-            this.style.height = "auto";
-            this.style.height = Math.min(this.scrollHeight, 140) + "px";
-        });
-
-        tx.addEventListener("keydown", function(e) {
-            if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        function getClientTime() {
-            const now = new Date();
-            return now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+        function handleKeyPress(e) {
+            if (e.key === 'Enter') sendMessage();
         }
 
         async function sendMessage() {
-            const text = tx.value.trim();
-            if (!text) return;
+            const input = document.getElementById('message-input');
+            const message = input.value.trim();
+            if (!message) return;
 
-            const timeNow = getClientTime();
+            const chatContainer = document.getElementById('chat-container');
 
-            container.innerHTML += `
-                <div class="msg-row user-row">
-                    <div class="msg-box">
-                        <div class="msg-content user-msg">${text}</div>
-                        <span class="time-tag">${timeNow}</span>
-                    </div>
-                </div>
-            `;
-            tx.value = "";
-            tx.style.height = "auto";
-            container.scrollTop = container.scrollHeight;
+            // Add User Message
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            userDiv.innerHTML = `<div class="bubble">${escapeHtml(message)}</div>`;
+            chatContainer.appendChild(userDiv);
+
+            input.value = '';
+            chatContainer.scrollTop = chatContainer.scrollHeight;
 
             try {
-                const res = await fetch("/chat", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ message: text })
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
                 });
 
-                const data = await res.json();
-                const msgTime = data.time || timeNow;
+                const data = await response.json();
 
+                // Add Bot Message
+                const botDiv = document.createElement('div');
+                botDiv.className = 'message bot';
+                
+                let monologueHtml = '';
                 if (data.monologue) {
-                    container.innerHTML += `
-                        <div class="msg-row bot-row">
-                            <div class="monologue-box">
-                                <div class="monologue-title">🧠 Вътрешен Монолог:</div>
-                                <div>${data.monologue}</div>
-                            </div>
-                        </div>
-                    `;
+                    monologueHtml = `<div class="monologue-box"><i class="fa-solid fa-brain"></i> <b>Вътрешен монолог:</b><br>${escapeHtml(data.monologue)}</div>`;
                 }
 
-                container.innerHTML += `
-                    <div class="msg-row bot-row">
-                        <div class="msg-box">
-                            <div class="msg-content bot-msg">${data.reply}</div>
-                            <span class="time-tag">${msgTime}</span>
-                        </div>
-                    </div>
+                botDiv.innerHTML = `
+                    ${monologueHtml}
+                    <div class="bubble">${escapeHtml(data.reply)}</div>
+                    <div class="timestamp">${data.time || ''}</div>
                 `;
-            } catch (err) {
-                container.innerHTML += `
-                    <div class="msg-row bot-row">
-                        <div class="msg-box">
-                            <div class="msg-content bot-msg" style="color: #ff8a80;">⚠️ Грешка при връзката.</div>
-                        </div>
-                    </div>
-                `;
-            }
 
-            container.scrollTop = container.scrollHeight;
+                chatContainer.appendChild(botDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+
+            } catch (err) {
+                showNotification('Грешка при комуникация със сървъра.', true);
+            }
+        }
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('file-input');
+            if (!fileInput.files.length) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            showNotification('Качване и индексиране на файла...');
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.status === 'success') {
+                    showNotification(data.message);
+                } else {
+                    showNotification(data.message, true);
+                }
+            } catch (err) {
+                showNotification('Грешка при качване на файла.', true);
+            } finally {
+                fileInput.value = '';
+            }
+        }
+
+        function escapeHtml(text) {
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
         }
     </script>
 </body>
