@@ -46,6 +46,7 @@ def detect_workspace_from_query(query):
     return None
 
 def download_repo_from_github():
+    """Сваля цялото NIKI_CORE съдържание от GitHub при стартиране"""
     if not GITHUB_TOKEN or not GITHUB_REPO:
         print("⚠️ Липсват GitHub данни за автоматично изтегляне.")
         return
@@ -176,7 +177,7 @@ def build_vector_index_for_workspace(ws_name):
 for ws in get_all_workspaces():
     build_vector_index_for_workspace(ws)
 
-def search_relevant_knowledge(ws_name, query, top_k=3):
+def search_relevant_knowledge(ws_name, query, top_k=4):
     _, ws_clean = get_workspace_paths(ws_name)
     idx_data = workspace_indices.get(ws_clean)
     if not idx_data or idx_data["vectorizer"] is None:
@@ -378,6 +379,38 @@ def upload_file():
     msg = f"Файлът '{filename}' е качен и синхронизиран с GitHub!" if uploaded else f"Файлът '{filename}' е качен локално (GitHub sync не е активен)."
     return jsonify({"status": "success", "message": msg})
 
+# 🔄 АВТОНОМЕН ЦИКЪЛ ЗА АВТО-ПРОДЪЛЖАВАНЕ ПРИ ГОЛЕМИ ТЕКСТОВЕ
+def run_autonomous_chat_loop(messages, client, max_auto_turns=3):
+    full_reply = ""
+    full_monologue = ""
+    turns = 0
+
+    while turns < max_auto_turns:
+        completion = client.chat.completions.create(
+            messages=messages,
+            model="llama-3.3-70b-versatile",
+            temperature=0.2
+        )
+        raw_response = completion.choices[0].message.content
+
+        # Записване на монолог
+        monologue_match = re.search(r'<monologue>(.*?)</monologue>', raw_response, re.DOTALL)
+        if monologue_match:
+            full_monologue += ("\n" if full_monologue else "") + monologue_match.group(1).strip()
+
+        clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
+        full_reply += ("\n" if full_reply else "") + clean_reply
+
+        # Проверка за прекъсване поради ограничение
+        if completion.choices[0].finish_reason == "length":
+            turns += 1
+            messages.append({"role": "assistant", "content": raw_response})
+            messages.append({"role": "user", "content": "Продължи абсолютно автономно точно от мястото, докъдето спря, без да повтаряш увода."})
+        else:
+            break
+
+    return full_reply.strip(), full_monologue.strip()
+
 @app.route("/chat", methods=["POST"])
 def chat():
     if not client:
@@ -387,7 +420,7 @@ def chat():
     user_message = data.get("message", "")
     current_ws = data.get("workspace", "general")
     
-    # 🧠 Автоматично разпознаване на намеренията за проект (Cross-Workspace Smart Search)
+    # 🧠 Автоматично разпознаване на проект от изречението (Cross-Workspace Smart Search)
     detected_ws = detect_workspace_from_query(user_message)
     target_ws = detected_ws if detected_ws else current_ws
 
@@ -434,19 +467,8 @@ def chat():
     messages.append({"role": "user", "content": f"{context_prefix}[ИЗТОЧНИК: АДМИН]\n{user_message}"})
 
     try:
-        completion = client.chat.completions.create(
-            messages=messages,
-            model="llama-3.3-70b-versatile",
-            temperature=0.2
-        )
-        raw_response = completion.choices[0].message.content
-        
-        monologue = ""
-        monologue_match = re.search(r'<monologue>(.*?)</monologue>', raw_response, re.DOTALL)
-        if monologue_match:
-            monologue = monologue_match.group(1).strip()
-            
-        clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
+        # Стартиране на автономния цикъл за генериране
+        clean_reply, monologue = run_autonomous_chat_loop(messages, client)
         
         save_chat_message(target_ws, "user", user_message)
         save_chat_message(target_ws, "assistant", clean_reply)
@@ -455,7 +477,7 @@ def chat():
             "reply": clean_reply, 
             "monologue": monologue, 
             "time": now_bg.strftime("%H:%M"),
-            "auto_detected_workspace": target_ws
+            "target_workspace": target_ws
         })
     except Exception as e:
         return jsonify({"reply": f"Грешка: {e}", "monologue": "", "time": now_bg.strftime("%H:%M")})
