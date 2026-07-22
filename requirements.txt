@@ -3,6 +3,5 @@ groq
 python-docx
 pypdf
 gunicorn
-sentence-transformers
-faiss-cpu
+scikit-learn
 numpy
