@@ -84,7 +84,7 @@ def build_vector_index():
     if text_chunks:
         vectorizer = TfidfVectorizer(ngram_range=(1, 2))
         tfidf_matrix = vectorizer.fit_transform(text_chunks)
-        print(f"Успешно индексирани {len(text_chunks)} текстови пасажа (Оптимизиран RAG).")
+        print(f"Успешно индексирани {len(text_chunks)} текстови пасажа.")
     else:
         vectorizer = None
         tfidf_matrix = None
@@ -104,23 +104,68 @@ def search_relevant_knowledge(query, top_k=3):
     
     results = []
     for idx in related_docs_indices:
-        if cosine_similarities[idx] > 0.05: # Праг за релевантност
+        if cosine_similarities[idx] > 0.05:
             results.append(text_chunks[idx])
             
     return "\n---\n".join(results) if results else "Няма директни съответствия в библиотеката."
 
+def get_stored_facts_and_hypotheses():
+    """Зарежда записаните факти и хипотези от базата данни."""
+    facts = []
+    hypotheses = []
+    
+    facts_file = os.path.join(STRUCTURE["facts"], "verified_facts.json")
+    hypo_file = os.path.join(STRUCTURE["hypotheses"], "working_hypotheses.json")
+    
+    if os.path.exists(facts_file):
+        try:
+            with open(facts_file, "r", encoding="utf-8") as f:
+                facts = json.load(f)
+        except: facts = []
+
+    if os.path.exists(hypo_file):
+        try:
+            with open(hypo_file, "r", encoding="utf-8") as f:
+                hypotheses = json.load(f)
+        except: hypotheses = []
+
+    return facts, hypotheses
+
+def save_fact_or_hypothesis(text, category="fact"):
+    """Записва нов факт или хипотеза."""
+    folder = STRUCTURE["facts"] if category == "fact" else STRUCTURE["hypotheses"]
+    filename = "verified_facts.json" if category == "fact" else "working_hypotheses.json"
+    filepath = os.path.join(folder, filename)
+    
+    data = []
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except: data = []
+        
+    entry = {
+        "content": text,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "priority": 100 if category == "fact" else 50
+    }
+    data.append(entry)
+    
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
 SYSTEM_INSTRUCTION = """
 Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) - автономна платформа за интегриране на знания, управлявана от Админ (100% ROOT достъп).
 
-СТРОГИ ПРАВИЛА:
+СТРОГИ ПРАВИЛА ЗА ОБЩУВАНЕ:
 1. Говориш САМО в първо лице, единствено число ("Аз", "моето", "съм"). Забранено е множествено число ("ние", "нас").
 2. Никога не започвай изречение само с глагола "Съм"! Използвай "Аз съм...", "Съгласен съм...", "Готов съм...".
 3. ПРИОРИТЕТИ И КРИТИЧНО МИСЛЕНЕ:
-   - Инструкциите от Админ са с най-висок приоритет (+100).
-   - Приемай фактите от Админ за верни, но допълвай с технически контекст и гранични условия.
-4. ВЪТРЕШЕН МОНОЛОГ:
+   - Фактите от Админ са с най-висок приоритет (+100) и са абсолютна истина.
+   - Хипотезите са идеи в процес на проверка.
+4. ВЪТРЕШЕН МОНОЛОГ (Вътрешен анализ преди отговор):
 <monologue>
-[Анализ: Векторно извлечен контекст | Гранични условия | Доверие (+100)]
+[Анализ: Контекст | База Факти (+100) | Хипотези | Източник]
 </monologue>
 """
 
@@ -164,9 +209,7 @@ def upload_file():
     save_path = os.path.join(STRUCTURE["library"], filename)
     file.save(save_path)
     
-    # Преиндексираме векторната памет с новия файл
     build_vector_index()
-    
     return jsonify({"status": "success", "message": f"Файлът '{filename}' беше качен и индексиран във векторната памет успешно!"})
 
 @app.route("/chat", methods=["POST"])
@@ -178,11 +221,29 @@ def chat():
     now_bg = datetime.now(BG_TIMEZONE)
     current_time_info = now_bg.strftime("%d.%m.%Y %H:%M")
 
-    # Векторно извличане само на релевантния контекст
+    # Автоматично засичане на команди за Запазване на Факт / Хипотеза
+    if user_message.lower().startswith("факт:"):
+        fact_text = user_message[5:].strip()
+        save_fact_or_hypothesis(fact_text, "fact")
+    elif user_message.lower().startswith("хипотеза:"):
+        hypo_text = user_message[9:].strip()
+        save_fact_or_hypothesis(hypo_text, "hypothesis")
+
+    # Извличане на контекст от Библиотеката, Фактите и Хипотезите
     retrieved_context = search_relevant_knowledge(user_message)
+    facts, hypotheses = get_stored_facts_and_hypotheses()
+
+    facts_str = "\n".join([f"- {f['content']}" for f in facts[-5:]]) if facts else "Няма записани факти."
+    hypo_str = "\n".join([f"- {h['content']}" for h in hypotheses[-5:]]) if hypotheses else "Няма записани хипотези."
 
     messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
-    context_prefix = f"[СИСТЕМЕН МАРКЕР ВРЕМЕ: {current_time_info}]\n[ВЕКТОРНО ИЗВЛЕЧЕНИ ЗНАНИЯ ОТ LIBRARY]:\n{retrieved_context}\n\n"
+    
+    context_prefix = (
+        f"[СИСТЕМЕН МАРКЕР ВРЕМЕ: {current_time_info}]\n"
+        f"[ПОТВЪРДЕНИ ФАКТИ (Приоритет +100)]:\n{facts_str}\n\n"
+        f"[РАБОТНИ ХИПОТЕЗИ]:\n{hypo_str}\n\n"
+        f"[ВЕКТОРНО ИЗВЛЕЧЕНИ ЗНАНИЯ ОТ LIBRARY]:\n{retrieved_context}\n\n"
+    )
     
     for msg in chat_history[-6:]:
         messages.append(msg)
@@ -203,7 +264,7 @@ def chat():
         if monologue_match:
             monologue = monologue_match.group(1).strip()
             
-        clean_reply = re.sub(r'<monologue>.*.*?<\/monologue>', '', raw_response, flags=re.DOTALL).strip()
+        clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
         
         chat_history.append({"role": "user", "content": user_message})
         chat_history.append({"role": "assistant", "content": clean_reply})
