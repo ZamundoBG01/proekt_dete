@@ -23,14 +23,14 @@ WORKSPACES_DIR = os.path.join(BASE_PATH, "workspaces")
 os.makedirs(WORKSPACES_DIR, exist_ok=True)
 
 def get_all_workspaces():
-    """Сканира директорията и връща всички налични проекти/workspaces."""
     ws_list = [d for d in os.listdir(WORKSPACES_DIR) if os.path.isdir(os.path.join(WORKSPACES_DIR, d))]
-    if "general" not in ws_list:
-        ws_list.append("general")
-    return sorted(ws_list)
+    default_ws = ["general", "martinala", "inventions", "ancient_language"]
+    for d_ws in default_ws:
+        if d_ws not in ws_list:
+            ws_list.append(d_ws)
+    return sorted(list(set(ws_list)))
 
 def get_workspace_paths(ws_name="general"):
-    """Генерира структурирани папки за конкретно работно пространство."""
     ws_clean = re.sub(r'[^\w\-]', '_', ws_name.lower().strip())
     if not ws_clean:
         ws_clean = "general"
@@ -40,13 +40,13 @@ def get_workspace_paths(ws_name="general"):
         "logs": os.path.join(ws_base, "logs"),
         "library": os.path.join(ws_base, "library"),
         "facts": os.path.join(ws_base, "facts"),
-        "hypotheses": os.path.join(ws_base, "hypotheses")
+        "hypotheses": os.path.join(ws_base, "hypotheses"),
+        "tasks": os.path.join(ws_base, "tasks")
     }
     for p in paths.values():
         os.makedirs(p, exist_ok=True)
     return paths, ws_clean
 
-# Индекси за векторно търсене по workspace
 workspace_indices = {}
 
 def chunk_text(text, chunk_size=400, overlap=40):
@@ -94,7 +94,6 @@ def build_vector_index_for_workspace(ws_name):
     else:
         workspace_indices[ws_clean] = {"vectorizer": None, "matrix": None, "chunks": []}
 
-# Инициализация при старт
 for ws in get_all_workspaces():
     build_vector_index_for_workspace(ws)
 
@@ -150,16 +149,52 @@ def save_fact_or_hypothesis(ws_name, text, category="fact"):
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+# --- BACKLOG УПРАВЛЕНИЕ НА ЗАДАЧИ ---
+def get_tasks(ws_name):
+    paths, _ = get_workspace_paths(ws_name)
+    tasks_file = os.path.join(paths["tasks"], "backlog.json")
+    if os.path.exists(tasks_file):
+        try:
+            with open(tasks_file, "r", encoding="utf-8") as f: return json.load(f)
+        except: return []
+    return []
+
+def add_task(ws_name, task_desc):
+    paths, _ = get_workspace_paths(ws_name)
+    tasks_file = os.path.join(paths["tasks"], "backlog.json")
+    tasks = get_tasks(ws_name)
+    tasks.append({
+        "task": task_desc,
+        "status": "PENDING",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+    with open(tasks_file, "w", encoding="utf-8") as f:
+        json.dump(tasks, f, ensure_ascii=False, indent=2)
+
+def complete_task(ws_name, task_desc):
+    paths, _ = get_workspace_paths(ws_name)
+    tasks_file = os.path.join(paths["tasks"], "backlog.json")
+    tasks = get_tasks(ws_name)
+    updated = False
+    for t in tasks:
+        if task_desc.lower() in t["task"].lower():
+            t["status"] = "DONE"
+            updated = True
+    if updated:
+        with open(tasks_file, "w", encoding="utf-8") as f:
+            json.dump(tasks, f, ensure_ascii=False, indent=2)
+    return updated
+
 SYSTEM_INSTRUCTION = """
 Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) - автономна платформа за интегриране на знания, управлявана от Админ (100% ROOT достъп).
 
 ПРАВИЛА:
 1. Говориш САМО в първо лице, единствено число ("Аз", "моето", "съм").
 2. Никога не започвай изречение само с глагола "Съм"!
-3. Приоритети: Фактите са с най-висок приоритет (+100).
+3. Приоритети: Фактите (+100), Задачи/Backlog (+80).
 4. Задължителен ВЪТРЕШЕН МОНОЛОГ:
 <monologue>
-[Анализ: Workspace | База Факти (+100) | Хипотези | Контекст]
+[Анализ: Workspace | База Факти (+100) | Активни Задачи | Контекст]
 </monologue>
 """
 
@@ -172,7 +207,6 @@ def index_page():
 
 @app.route("/workspaces", methods=["GET", "POST"])
 def manage_workspaces():
-    """Връща списък с всички проекти или създава нов проект динамично."""
     if request.method == "POST":
         ws_name = request.json.get("name", "").strip()
         if ws_name:
@@ -215,19 +249,13 @@ def chat():
     user_message = data.get("message", "")
     ws_name = data.get("workspace", "general")
     
-    # Автоматично засичане на команда за създаване на проект през чата
-    create_match = re.match(r'^(създай проект|нов проект|създай workspace):\s*(.+)$', user_message.strip(), re.IGNORECASE)
-    if create_match:
-        new_ws_name = create_match.group(2).strip()
-        paths, ws_clean = get_workspace_paths(new_ws_name)
-        build_vector_index_for_workspace(ws_clean)
-        now_bg = datetime.now(BG_TIMEZONE)
-        return jsonify({
-            "reply": f"Проектът **'{ws_clean}'** беше създаден успешно! Вече разполага с изолирана памет, библиотека за документи и дневник.",
-            "monologue": f"[Команда: Създаване на нов Workspace '{ws_clean}']",
-            "time": now_bg.strftime("%H:%M"),
-            "new_workspace": ws_clean
-        })
+    # Обработка на команди за задачи
+    if user_message.lower().startswith("задача:"):
+        task_text = user_message[7:].strip()
+        add_task(ws_name, task_text)
+    elif user_message.lower().startswith("готова задача:") or user_message.lower().startswith("завършена задача:"):
+        task_text = re.sub(r'^(готова задача|завършена задача):\s*', '', user_message, flags=re.IGNORECASE).strip()
+        complete_task(ws_name, task_text)
 
     now_bg = datetime.now(BG_TIMEZONE)
     current_time_info = now_bg.strftime("%d.%m.%Y %H:%M")
@@ -239,9 +267,13 @@ def chat():
 
     retrieved_context = search_relevant_knowledge(ws_name, user_message)
     facts, hypotheses = get_stored_facts_and_hypotheses(ws_name)
+    tasks = get_tasks(ws_name)
 
     facts_str = "\n".join([f"- {f['content']}" for f in facts[-5:]]) if facts else "Няма факти."
     hypo_str = "\n".join([f"- {h['content']}" for h in hypotheses[-5:]]) if hypotheses else "Няма хипотези."
+    
+    pending_tasks = [f"• {t['task']}" for t in tasks if t['status'] == 'PENDING']
+    tasks_str = "\n".join(pending_tasks) if pending_tasks else "Няма активни незавършени задачи."
 
     messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
     
@@ -249,6 +281,7 @@ def chat():
         f"[АКТИВЕН WORKSPACE: {ws_name.upper()}]\n"
         f"[ВРЕМЕ: {current_time_info}]\n"
         f"[ФАКТИ (+100)]:\n{facts_str}\n\n"
+        f"[АКТИВНИ ЗАДАЧИ (+80)]:\n{tasks_str}\n\n"
         f"[ХИПОТЕЗИ]:\n{hypo_str}\n\n"
         f"[ИЗВЛЕЧЕНИ ЗНАНИЯ]:\n{retrieved_context}\n\n"
     )
@@ -274,7 +307,7 @@ def chat():
         if monologue_match:
             monologue = monologue_match.group(1).strip()
             
-        clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
+        clean_reply = re.sub(r'<monologue>.*.*?<\/monologue>', '', raw_response, flags=re.DOTALL).strip()
         
         chat_history[ws_name].append({"role": "user", "content": user_message})
         chat_history[ws_name].append({"role": "assistant", "content": clean_reply})
