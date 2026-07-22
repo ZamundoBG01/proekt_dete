@@ -28,8 +28,24 @@ WORKSPACES_DIR = os.path.join(BASE_PATH, "workspaces")
 
 os.makedirs(WORKSPACES_DIR, exist_ok=True)
 
+# 🧠 Семантична карта / Синоними за авто-разпознаване на проект
+WORKSPACE_ALIASES = {
+    "ancient_language": ["извънземен", "извънземния", "древен", "мартинала", "мартиналски", "марсиански", "език", "знаци", "символи", "папирус"],
+    "inventions": ["изобретение", "изобретения", "патент", "чертеж", "идея", "чертежи", "устройство", "прототип"],
+    "martinala": ["мартин", "мартинала", "лични", "бележки"],
+    "general": ["общи", "всичко", "главно", "основно", "система"]
+}
+
+def detect_workspace_from_query(query):
+    """Открива автоматично за кой проект говори потребителят според ключови думи"""
+    q_lower = query.lower()
+    for ws_name, aliases in WORKSPACE_ALIASES.items():
+        for alias in aliases:
+            if alias in q_lower:
+                return ws_name
+    return None
+
 def download_repo_from_github():
-    """Сваля цялото NIKI_CORE съдържание от GitHub при стартиране"""
     if not GITHUB_TOKEN or not GITHUB_REPO:
         print("⚠️ Липсват GitHub данни за автоматично изтегляне.")
         return
@@ -49,7 +65,6 @@ def download_repo_from_github():
                         os.makedirs(local_file_path, exist_ok=True)
                     elif item.get("type") == "blob":
                         os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
-                        # Изтегляне на файла
                         file_res = requests.get(item.get("url"), headers=headers)
                         if file_res.status_code == 200:
                             content = base64.b64decode(file_res.json().get("content", ""))
@@ -59,7 +74,6 @@ def download_repo_from_github():
     except Exception as e:
         print(f"⚠️ Грешка при изтегляне от GitHub: {e}")
 
-# Синхронизираме локалната папка от GitHub при стартиране
 download_repo_from_github()
 
 def upload_file_to_github(relative_filepath, file_bytes):
@@ -92,7 +106,6 @@ def get_all_workspaces():
             ws_list.append(d_ws)
     
     unique_ws = sorted(list(set(ws_list)))
-    # Заковаване на general НАЙ-ГОРЕ
     if "general" in unique_ws:
         unique_ws.remove("general")
         return ["general"] + unique_ws
@@ -327,7 +340,6 @@ def manage_workspaces():
 
 @app.route("/workspace_files/<ws_name>", methods=["GET"])
 def get_workspace_files(ws_name):
-    """Връща списък с качените файлове за конкретно работно пространство"""
     paths, _ = get_workspace_paths(ws_name)
     lib_dir = paths["library"]
     files = []
@@ -373,26 +385,30 @@ def chat():
 
     data = request.json or {}
     user_message = data.get("message", "")
-    ws_name = data.get("workspace", "general")
+    current_ws = data.get("workspace", "general")
     
+    # 🧠 Автоматично разпознаване на намеренията за проект (Cross-Workspace Smart Search)
+    detected_ws = detect_workspace_from_query(user_message)
+    target_ws = detected_ws if detected_ws else current_ws
+
     if user_message.lower().startswith("задача:"):
         task_text = user_message[7:].strip()
-        add_task(ws_name, task_text)
+        add_task(target_ws, task_text)
     elif user_message.lower().startswith("готова задача:") or user_message.lower().startswith("завършена задача:"):
         task_text = re.sub(r'^(готова задача|завършена задача):\s*', '', user_message, flags=re.IGNORECASE).strip()
-        complete_task(ws_name, task_text)
+        complete_task(target_ws, task_text)
 
     now_bg = datetime.now(BG_TIMEZONE)
     current_time_info = now_bg.strftime("%d.%m.%Y %H:%M")
 
     if user_message.lower().startswith("факт:"):
-        save_fact_or_hypothesis(ws_name, user_message[5:].strip(), "fact")
+        save_fact_or_hypothesis(target_ws, user_message[5:].strip(), "fact")
     elif user_message.lower().startswith("хипотеза:"):
-        save_fact_or_hypothesis(ws_name, user_message[9:].strip(), "hypothesis")
+        save_fact_or_hypothesis(target_ws, user_message[9:].strip(), "hypothesis")
 
-    retrieved_context = search_relevant_knowledge(ws_name, user_message)
-    facts, hypotheses = get_stored_facts_and_hypotheses(ws_name)
-    tasks = get_tasks(ws_name)
+    retrieved_context = search_relevant_knowledge(target_ws, user_message)
+    facts, hypotheses = get_stored_facts_and_hypotheses(target_ws)
+    tasks = get_tasks(target_ws)
 
     facts_str = "\n".join([f"- {f['content']}" for f in facts[-5:]]) if facts else "Няма факти."
     hypo_str = "\n".join([f"- {h['content']}" for h in hypotheses[-5:]]) if hypotheses else "Няма хипотези."
@@ -403,7 +419,7 @@ def chat():
     messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
     
     context_prefix = (
-        f"[АКТИВЕН WORKSPACE: {ws_name.upper()}]\n"
+        f"[АКТИВЕН WORKSPACE: {target_ws.upper()}]\n"
         f"[ВРЕМЕ: {current_time_info}]\n"
         f"[ФАКТИ (+100)]:\n{facts_str}\n\n"
         f"[АКТИВНИ ЗАДАЧИ (+80)]:\n{tasks_str}\n\n"
@@ -411,7 +427,7 @@ def chat():
         f"[ИЗВЛЕЧЕНИ ЗНАНИЯ]:\n{retrieved_context}\n\n"
     )
     
-    history_from_file = get_chat_history(ws_name)
+    history_from_file = get_chat_history(target_ws)
     for msg in history_from_file[-8:]:
         messages.append({"role": msg["role"], "content": msg["content"]})
 
@@ -432,13 +448,14 @@ def chat():
             
         clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
         
-        save_chat_message(ws_name, "user", user_message)
-        save_chat_message(ws_name, "assistant", clean_reply)
+        save_chat_message(target_ws, "user", user_message)
+        save_chat_message(target_ws, "assistant", clean_reply)
 
         return jsonify({
             "reply": clean_reply, 
             "monologue": monologue, 
-            "time": now_bg.strftime("%H:%M")
+            "time": now_bg.strftime("%H:%M"),
+            "auto_detected_workspace": target_ws
         })
     except Exception as e:
         return jsonify({"reply": f"Грешка: {e}", "monologue": "", "time": now_bg.strftime("%H:%M")})
