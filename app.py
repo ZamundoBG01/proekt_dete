@@ -94,6 +94,59 @@ def upload_file_to_github(relative_filepath, file_bytes):
     put_res = requests.put(url, headers=headers, json=payload)
     return put_res.status_code in [200, 201]
 
+def run_self_diagnostics():
+    report = []
+    report.append("🔍 **САМОДИАГНОСТИКА НА N.I.K.I. CORE**\n")
+    
+    if GROQ_KEY:
+        report.append("✅ **Groq API Key:** Активен")
+    else:
+        report.append("❌ **Groq API Key:** Липсва GROQ_API_KEY в Environment Variables")
+        
+    if GITHUB_TOKEN and GITHUB_REPO:
+        report.append(f"✅ **GitHub Интеграция:** Свързан с `{GITHUB_REPO}` (Клон: `{GITHUB_BRANCH}`)")
+    else:
+        report.append("⚠️ **GitHub Интеграция:** Липсват GITHUB_TOKEN или GITHUB_REPO")
+
+    workspaces = get_all_workspaces()
+    report.append(f"📁 **Работни Пространства ({len(workspaces)}):** {', '.join(workspaces)}")
+
+    total_files = 0
+    corrupted_files = []
+    
+    for ws in workspaces:
+        paths, _ = get_workspace_paths(ws)
+        if os.path.exists(paths["library"]):
+            files = [f for f in os.listdir(paths["library"]) if not os.path.isdir(os.path.join(paths["library"], f))]
+            total_files += len(files)
+            
+        json_files = [
+            os.path.join(paths["facts"], "verified_facts.json"),
+            os.path.join(paths["hypotheses"], "working_hypotheses.json"),
+            os.path.join(paths["tasks"], "backlog.json"),
+            os.path.join(paths["chat"], "chat_history.json")
+        ]
+        
+        for jf in json_files:
+            if os.path.exists(jf):
+                try:
+                    with open(jf, "r", encoding="utf-8") as f:
+                        json.load(f)
+                except Exception as e:
+                    corrupted_files.append(f"{os.path.relpath(jf, BASE_DIR)} (Грешка: {e})")
+
+    report.append(f"📚 **Качени документи в библиотека:** {total_files}")
+
+    if corrupted_files:
+        report.append("❌ **Повредени JSON файлове:**\n" + "\n".join([f"- {cf}" for cf in corrupted_files]))
+    else:
+        report.append("✅ **Целост на базата данни:** Всички JSON файлове са изправни.")
+
+    indexed_ws = sum(1 for ws in workspace_indices if workspace_indices[ws].get("vectorizer") is not None)
+    report.append(f"🧠 **Векторни индекси:** {indexed_ws} от {len(workspaces)} пространства са индексирани.")
+
+    return "\n\n".join(report)
+
 def get_all_workspaces():
     ws_list = [d for d in os.listdir(WORKSPACES_DIR) if os.path.isdir(os.path.join(WORKSPACES_DIR, d))]
     default_ws = ["general", "martinala", "inventions", "ancient_language"]
@@ -304,7 +357,6 @@ SYSTEM_INSTRUCTION = """
 ПРАВИЛА НА ОБЩУВАНЕ:
 - Говориш САМО в първо лице, единствено число ("Аз", "моето", "съм").
 - Приоритети: Факти (+100), Задачи (+80), Извлечени Знания (+70).
-- При възникване на грешка или липсващ модул, правиш САМОДИАГНОСТИКА и посочваш точно къде в кода е проблемът и как да го отстраним.
 
 ЗАДЪЛЖИТЕЛЕН МИСЛОВЕН ПРОЦЕС:
 Преди всеки отговор, в тага <monologue> анализираш стъпките за постигане на целта на Админ.
@@ -403,9 +455,22 @@ def chat():
         return jsonify({"reply": "⚠️ Липсва GROQ_API_KEY!", "monologue": "", "time": ""})
 
     data = request.json or {}
-    user_message = data.get("message", "")
+    user_message = data.get("message", "").strip()
     current_ws = data.get("workspace", "general")
     
+    now_bg = datetime.now(BG_TIMEZONE)
+
+    # 1. ПРИХВАЩАНЕ НА ДИАГНОСТИКА И САМОДИАГНОСТИКА
+    clean_msg = user_message.lower().strip()
+    if clean_msg in ["диагностика", "самодиагностика", "направи диагностика", "направи си самодиагностика", "сканирай за грешки"]:
+        diag_report = run_self_diagnostics()
+        return jsonify({
+            "reply": diag_report,
+            "monologue": "Изпълних вътрешен скрипт за пълна самодиагностика. Сканирах API ключовете, интеграцията с GitHub, целостта на JSON файловете и векторните индекси.",
+            "time": now_bg.strftime("%H:%M"),
+            "target_workspace": current_ws
+        })
+
     detected_ws = detect_workspace_from_query(user_message)
     target_ws = detected_ws if detected_ws else current_ws
 
@@ -416,7 +481,6 @@ def chat():
         task_text = user_message[14:].strip()
         complete_task(target_ws, task_text)
 
-    now_bg = datetime.now(BG_TIMEZONE)
     current_time_info = now_bg.strftime("%d.%m.%Y %H:%M")
 
     if user_message.lower().startswith("факт:"):
