@@ -18,16 +18,24 @@ client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_PATH = os.path.join(BASE_DIR, "NIKI_CORE")
+WORKSPACES_DIR = os.path.join(BASE_PATH, "workspaces")
 
-# Поддържани работни пространства (Workspaces)
-WORKSPACES = ["general", "martinala", "inventions"]
+os.makedirs(WORKSPACES_DIR, exist_ok=True)
+
+def get_all_workspaces():
+    """Сканира директорията и връща всички налични проекти/workspaces."""
+    ws_list = [d for d in os.listdir(WORKSPACES_DIR) if os.path.isdir(os.path.join(WORKSPACES_DIR, d))]
+    if "general" not in ws_list:
+        ws_list.append("general")
+    return sorted(ws_list)
 
 def get_workspace_paths(ws_name="general"):
     """Генерира структурирани папки за конкретно работно пространство."""
-    if ws_name not in WORKSPACES:
-        ws_name = "general"
+    ws_clean = re.sub(r'[^\w\-]', '_', ws_name.lower().strip())
+    if not ws_clean:
+        ws_clean = "general"
         
-    ws_base = os.path.join(BASE_PATH, "workspaces", ws_name)
+    ws_base = os.path.join(WORKSPACES_DIR, ws_clean)
     paths = {
         "logs": os.path.join(ws_base, "logs"),
         "library": os.path.join(ws_base, "library"),
@@ -36,11 +44,7 @@ def get_workspace_paths(ws_name="general"):
     }
     for p in paths.values():
         os.makedirs(p, exist_ok=True)
-    return paths
-
-# Инициализация на базовите папки
-for ws in WORKSPACES:
-    get_workspace_paths(ws)
+    return paths, ws_clean
 
 # Индекси за векторно търсене по workspace
 workspace_indices = {}
@@ -55,8 +59,7 @@ def chunk_text(text, chunk_size=400, overlap=40):
     return chunks
 
 def build_vector_index_for_workspace(ws_name):
-    """Изгражда векторния индекс за конкретно работно пространство."""
-    paths = get_workspace_paths(ws_name)
+    paths, ws_clean = get_workspace_paths(ws_name)
     library_path = paths["library"]
     
     chunks = []
@@ -87,16 +90,17 @@ def build_vector_index_for_workspace(ws_name):
     if chunks:
         vec = TfidfVectorizer(ngram_range=(1, 2))
         mat = vec.fit_transform(chunks)
-        workspace_indices[ws_name] = {"vectorizer": vec, "matrix": mat, "chunks": chunks}
+        workspace_indices[ws_clean] = {"vectorizer": vec, "matrix": mat, "chunks": chunks}
     else:
-        workspace_indices[ws_name] = {"vectorizer": None, "matrix": None, "chunks": []}
+        workspace_indices[ws_clean] = {"vectorizer": None, "matrix": None, "chunks": []}
 
-# Изграждане на индексите при старт
-for ws in WORKSPACES:
+# Инициализация при старт
+for ws in get_all_workspaces():
     build_vector_index_for_workspace(ws)
 
 def search_relevant_knowledge(ws_name, query, top_k=3):
-    idx_data = workspace_indices.get(ws_name)
+    _, ws_clean = get_workspace_paths(ws_name)
+    idx_data = workspace_indices.get(ws_clean)
     if not idx_data or idx_data["vectorizer"] is None:
         return "Няма документи в това работно пространство."
     
@@ -108,7 +112,7 @@ def search_relevant_knowledge(ws_name, query, top_k=3):
     return "\n---\n".join(results) if results else "Няма съответствия в библиотеката."
 
 def get_stored_facts_and_hypotheses(ws_name):
-    paths = get_workspace_paths(ws_name)
+    paths, _ = get_workspace_paths(ws_name)
     facts_file = os.path.join(paths["facts"], "verified_facts.json")
     hypo_file = os.path.join(paths["hypotheses"], "working_hypotheses.json")
     
@@ -126,7 +130,7 @@ def get_stored_facts_and_hypotheses(ws_name):
     return facts, hypotheses
 
 def save_fact_or_hypothesis(ws_name, text, category="fact"):
-    paths = get_workspace_paths(ws_name)
+    paths, _ = get_workspace_paths(ws_name)
     folder = paths["facts"] if category == "fact" else paths["hypotheses"]
     filename = "verified_facts.json" if category == "fact" else "working_hypotheses.json"
     filepath = os.path.join(folder, filename)
@@ -166,10 +170,23 @@ chat_history = {}
 def index_page():
     return render_template("index.html")
 
+@app.route("/workspaces", methods=["GET", "POST"])
+def manage_workspaces():
+    """Връща списък с всички проекти или създава нов проект динамично."""
+    if request.method == "POST":
+        ws_name = request.json.get("name", "").strip()
+        if ws_name:
+            paths, ws_clean = get_workspace_paths(ws_name)
+            build_vector_index_for_workspace(ws_clean)
+            return jsonify({"status": "success", "workspace": ws_clean, "all": get_all_workspaces()})
+        return jsonify({"status": "error", "message": "Невалидно име."})
+    
+    return jsonify({"workspaces": get_all_workspaces()})
+
 @app.route("/upload", methods=["POST"])
 def upload_file():
     ws_name = request.form.get("workspace", "general")
-    paths = get_workspace_paths(ws_name)
+    paths, ws_clean = get_workspace_paths(ws_name)
     
     if "file" not in request.files:
         return jsonify({"status": "error", "message": "Няма прикачен файл."})
@@ -186,8 +203,8 @@ def upload_file():
     save_path = os.path.join(paths["library"], filename)
     file.save(save_path)
     
-    build_vector_index_for_workspace(ws_name)
-    return jsonify({"status": "success", "message": f"Файлът '{filename}' е качен в Workspace [{ws_name.upper()}]!"})
+    build_vector_index_for_workspace(ws_clean)
+    return jsonify({"status": "success", "message": f"Файлът '{filename}' е качен в Workspace [{ws_clean.upper()}]!"})
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -198,6 +215,20 @@ def chat():
     user_message = data.get("message", "")
     ws_name = data.get("workspace", "general")
     
+    # Автоматично засичане на команда за създаване на проект през чата
+    create_match = re.match(r'^(създай проект|нов проект|създай workspace):\s*(.+)$', user_message.strip(), re.IGNORECASE)
+    if create_match:
+        new_ws_name = create_match.group(2).strip()
+        paths, ws_clean = get_workspace_paths(new_ws_name)
+        build_vector_index_for_workspace(ws_clean)
+        now_bg = datetime.now(BG_TIMEZONE)
+        return jsonify({
+            "reply": f"Проектът **'{ws_clean}'** беше създаден успешно! Вече разполага с изолирана памет, библиотека за документи и дневник.",
+            "monologue": f"[Команда: Създаване на нов Workspace '{ws_clean}']",
+            "time": now_bg.strftime("%H:%M"),
+            "new_workspace": ws_clean
+        })
+
     now_bg = datetime.now(BG_TIMEZONE)
     current_time_info = now_bg.strftime("%d.%m.%Y %H:%M")
 
