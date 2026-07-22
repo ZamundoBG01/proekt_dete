@@ -8,8 +8,8 @@ from pypdf import PdfReader
 from flask import Flask, render_template, request, jsonify
 from werkzeug.utils import secure_filename
 from groq import Groq
-from sentence_transformers import SentenceTransformer
-import faiss
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
 
@@ -33,16 +33,12 @@ STRUCTURE = {
 for path in STRUCTURE.values():
     os.makedirs(path, exist_ok=True)
 
-# Инициализиране на модела за ембединги (олекотен и бърз)
-print("Инициализиране на Embedding модел...")
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-
-# Глобален вектор за FAISS и текстови пасажи
-vector_dimension = 384
-index = faiss.IndexFlatL2(vector_dimension)
+# Глобални променливи за векторно търсене
+vectorizer = None
+tfidf_matrix = None
 text_chunks = []
 
-def chunk_text(text, chunk_size=500, overlap=50):
+def chunk_text(text, chunk_size=400, overlap=40):
     """Разделя текста на малки логически пасажи."""
     words = text.split()
     chunks = []
@@ -53,13 +49,11 @@ def chunk_text(text, chunk_size=500, overlap=50):
     return chunks
 
 def build_vector_index():
-    """Сканира библиотеката и изгражда FAISS векторния индекс."""
-    global index, text_chunks
+    """Сканира библиотеката и изгражда олекотен векторния индекс."""
+    global vectorizer, tfidf_matrix, text_chunks
     text_chunks = []
-    index = faiss.IndexFlatL2(vector_dimension)
     
     library_path = STRUCTURE["library"]
-    raw_texts = []
 
     if os.path.exists(library_path):
         for filename in os.listdir(library_path):
@@ -88,27 +82,32 @@ def build_vector_index():
                     text_chunks.append(f"[{filename}]: {c}")
 
     if text_chunks:
-        embeddings = embedder.encode(text_chunks, convert_to_numpy=True)
-        index.add(embeddings)
-        print(f"Успешно индексирани {len(text_chunks)} текстови пасажа в FAISS.")
+        vectorizer = TfidfVectorizer(ngram_range=(1, 2))
+        tfidf_matrix = vectorizer.fit_transform(text_chunks)
+        print(f"Успешно индексирани {len(text_chunks)} текстови пасажа (Оптимизиран RAG).")
+    else:
+        vectorizer = None
+        tfidf_matrix = None
 
 # Първоначално изграждане на индекса при старт
 build_vector_index()
 
 def search_relevant_knowledge(query, top_k=3):
-    """Векторно търсене на най-подходящите пасажи за дадения въпрос."""
-    if index.ntotal == 0 or not text_chunks:
+    """Изключително бързо и леко семантично търсене в библиотеката."""
+    global vectorizer, tfidf_matrix, text_chunks
+    if vectorizer is None or tfidf_matrix is None or not text_chunks:
         return "Няма качени документи в библиотеката."
     
-    query_vector = embedder.encode([query], convert_to_numpy=True)
-    distances, indices = index.search(query_vector, min(top_k, index.ntotal))
+    query_vec = vectorizer.transform([query])
+    cosine_similarities = cosine_similarity(query_vec, tfidf_matrix).flatten()
+    related_docs_indices = cosine_similarities.argsort()[::-1][:top_k]
     
     results = []
-    for idx in indices[0]:
-        if idx < len(text_chunks):
+    for idx in related_docs_indices:
+        if cosine_similarities[idx] > 0.05: # Праг за релевантност
             results.append(text_chunks[idx])
             
-    return "\n---\n".join(results) if results else "Няма намерени съответствия."
+    return "\n---\n".join(results) if results else "Няма директни съответствия в библиотеката."
 
 SYSTEM_INSTRUCTION = """
 Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) - автономна платформа за интегриране на знания, управлявана от Админ (100% ROOT достъп).
@@ -204,7 +203,7 @@ def chat():
         if monologue_match:
             monologue = monologue_match.group(1).strip()
             
-        clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
+        clean_reply = re.sub(r'<monologue>.*.*?<\/monologue>', '', raw_response, flags=re.DOTALL).strip()
         
         chat_history.append({"role": "user", "content": user_message})
         chat_history.append({"role": "assistant", "content": clean_reply})
