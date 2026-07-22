@@ -3,246 +3,201 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>N.I.K.I. OS - Dynamic Workspace Manager</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <title>N.I.K.I. OS - Knowledge Core</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <style>
-        :root {
-            --bg-color: #0b0f19;
-            --card-bg: #111827;
-            --accent-color: #3b82f6;
-            --accent-hover: #2563eb;
-            --text-main: #f3f4f6;
-            --text-muted: #9ca3af;
-            --border-color: #1f2937;
-            --monologue-bg: rgba(59, 130, 246, 0.08);
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
-        body { background-color: var(--bg-color); color: var(--text-main); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-
-        header {
-            background-color: var(--card-bg);
-            padding: 15px 25px;
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .logo-container { display: flex; align-items: center; gap: 12px; }
-        .status-dot { width: 10px; height: 10px; background-color: #10b981; border-radius: 50%; box-shadow: 0 0 10px #10b981; }
-        .title { font-size: 1.2rem; font-weight: 700; color: #ffffff; }
-        .subtitle { font-size: 0.8rem; color: var(--text-muted); }
-
-        .workspace-controls { display: flex; align-items: center; gap: 8px; }
-
-        .workspace-select {
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            border: 1px solid var(--border-color);
-            padding: 8px 12px;
-            border-radius: 8px;
-            outline: none;
-            cursor: pointer;
-        }
-
-        .add-ws-btn {
-            background-color: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--accent-color);
-            padding: 8px 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .add-ws-btn:hover { background-color: rgba(59, 130, 246, 0.1); border-color: var(--accent-color); }
-
-        #chat-container { flex: 1; overflow-y: auto; padding: 25px; display: flex; flex-direction: column; gap: 20px; }
-        .message { display: flex; flex-direction: column; max-width: 80%; animation: fadeIn 0.3s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-
-        .message.user { align-self: flex-end; }
-        .message.bot { align-self: flex-start; }
-
-        .bubble { padding: 14px 18px; border-radius: 12px; font-size: 0.98rem; line-height: 1.5; white-space: pre-wrap; }
-        .user .bubble { background-color: var(--accent-color); color: #ffffff; }
-        .bot .bubble { background-color: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); }
-
-        .timestamp { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; align-self: flex-end; }
-        .monologue-box { background-color: var(--monologue-bg); border-left: 3px solid var(--accent-color); padding: 10px 14px; margin-bottom: 8px; border-radius: 6px; font-size: 0.85rem; color: #93c5fd; font-family: monospace; }
-
-        .input-area { background-color: var(--card-bg); padding: 15px 25px; border-top: 1px solid var(--border-color); display: flex; gap: 12px; align-items: center; }
-        .file-upload-btn { background-color: transparent; border: 1px solid var(--border-color); color: var(--text-muted); width: 45px; height: 45px; border-radius: 50%; display: flex; justify-content: center; align-items: center; cursor: pointer; }
-        .file-upload-btn:hover { color: var(--accent-color); border-color: var(--accent-color); }
-        #file-input { display: none; }
-
-        #message-input { flex: 1; background-color: var(--bg-color); border: 1px solid var(--border-color); padding: 12px 18px; border-radius: 25px; color: var(--text-main); outline: none; }
-        #message-input:focus { border-color: var(--accent-color); }
-
-        .send-btn { background-color: var(--accent-color); color: white; border: none; width: 45px; height: 45px; border-radius: 50%; cursor: pointer; display: flex; justify-content: center; align-items: center; }
-        #notification { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; background-color: #10b981; color: white; display: none; z-index: 1000; }
+        body { background-color: #0f172a; color: #f8fafc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .sidebar { background-color: #1e293b; border-right: 1px solid #334155; min-height: 100vh; }
+        .chat-container { height: calc(100vh - 120px); overflow-y: auto; padding: 20px; }
+        .message { margin-bottom: 20px; max-width: 80%; }
+        .message-user { margin-left: auto; background-color: #0284c7; color: white; border-radius: 18px 18px 2px 18px; padding: 12px 18px; }
+        .message-niki { margin-right: auto; background-color: #334155; color: #f8fafc; border-radius: 18px 18px 18px 2px; padding: 12px 18px; }
+        .monologue-box { background-color: #0f172a; border-left: 3px solid #f59e0b; color: #cbd5e1; font-size: 0.85rem; padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+        .ws-btn { text-align: left; background: transparent; border: 1px solid #334155; color: #94a3b8; transition: all 0.2s; }
+        .ws-btn.active, .ws-btn:hover { background-color: #3b82f6; color: white; border-color: #3b82f6; }
+        .status-dot { width: 10px; height: 10px; background-color: #22c55e; border-radius: 50%; display: inline-block; }
     </style>
 </head>
 <body>
 
-    <div id="notification"></div>
+<div class="container-fluid">
+    <div class="row">
+        <!-- Ляво Странично Меню (Sidebar) -->
+        <div class="col-md-3 col-lg-2 sidebar p-3">
+            <div class="d-flex align-items-center gap-2 mb-4">
+                <span class="status-dot"></span>
+                <h5 class="m-0 fw-bold text-light">N.I.K.I. CORE</h5>
+            </div>
+            
+            <h6 class="text-uppercase text-muted fs-7 fw-bold mb-3">Workspaces</h6>
+            <div id="workspace-list" class="d-flex flex-column gap-2 mb-4">
+                <!-- Динамично заредени пространства -->
+            </div>
 
-    <header>
-        <div class="logo-container">
-            <div class="status-dot"></div>
-            <div>
-                <div class="title">N.I.K.I. OS</div>
-                <div class="subtitle">Dynamic Workspace Manager (v5.1)</div>
+            <button class="btn btn-outline-primary btn-sm w-100 mb-4" onclick="createNewWorkspace()">
+                <i class="bi bi-plus-lg"></i> Нов Workspace
+            </button>
+
+            <hr class="border-secondary">
+
+            <div class="mb-3">
+                <label class="form-label fs-7 text-muted">Качване на документ:</label>
+                <input type="file" id="file-input" class="form-control form-control-sm bg-dark text-light border-secondary">
+                <button class="btn btn-success btn-sm w-100 mt-2" onclick="uploadFile()">
+                    <i class="bi bi-cloud-upload"></i> Синхронизирай
+                </button>
+            </div>
+            <div id="upload-status" class="fs-7 text-info mt-2"></div>
+        </div>
+
+        <!-- Основна Зона за Чат -->
+        <div class="col-md-9 col-lg-10 p-0 d-flex flex-column" style="height: 100vh;">
+            <!-- Хедър -->
+            <div class="p-3 bg-slate-800 border-bottom border-secondary d-flex justify-content-between align-items-center" style="background-color: #1e293b;">
+                <div>
+                    <span class="text-muted fs-7">Активно пространство:</span>
+                    <strong id="current-ws-title" class="text-info ms-2">GENERAL</strong>
+                </div>
+                <div class="fs-7 text-muted">ROOT Access Active</div>
+            </div>
+
+            <!-- Чат Прозорец -->
+            <div id="chat-box" class="chat-container flex-grow-1">
+                <div class="text-center text-muted my-5">
+                    <i class="bi bi-cpu fs-1"></i>
+                    <p class="mt-2">N.I.K.I. Engine v9.0 е готов. Изберете команда или въпрос.</p>
+                </div>
+            </div>
+
+            <!-- Форма за Изпращане -->
+            <div class="p-3 border-top border-secondary" style="background-color: #1e293b;">
+                <form id="chat-form" onsubmit="sendMessage(event)">
+                    <div class="input-group">
+                        <input type="text" id="user-input" class="form-control bg-dark text-light border-secondary p-3" placeholder="Задай въпрос, задача (задача:...) или факт (факт:...)..." required>
+                        <button class="btn btn-primary px-4" type="submit">
+                            <i class="bi bi-send-fill"></i> Изпрати
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
-        <div class="workspace-controls">
-            <label style="font-size: 0.85rem; color: var(--text-muted);">Workspace:</label>
-            <select id="workspace-select" class="workspace-select"></select>
-            <button class="add-ws-btn" onclick="createNewWorkspacePrompt()" title="Добави нов проект"><i class="fa-solid fa-plus"></i></button>
-        </div>
-    </header>
-
-    <div id="chat-container">
-        <div class="message bot">
-            <div class="bubble">Привет, Админ! Динамичното управление на проекти е активно. Можеш да добавяш нови проекти с бутона '+' или като напишеш 'Нов проект: [име]' в чата.</div>
-        </div>
     </div>
+</div>
 
-    <div class="input-area">
-        <label for="file-input" class="file-upload-btn" title="Качи документ">
-            <i class="fa-solid fa-paperclip"></i>
-        </label>
-        <input type="file" id="file-input" accept=".txt,.pdf,.docx" onchange="uploadFile()">
+<script>
+    let currentWorkspace = "general";
 
-        <input type="text" id="message-input" placeholder="Задай въпрос..." onkeypress="handleKeyPress(event)">
+    async function loadWorkspaces() {
+        try {
+            const res = await fetch("/workspaces");
+            const data = await res.json();
+            const listContainer = document.getElementById("workspace-list");
+            listContainer.innerHTML = "";
+            
+            data.workspaces.forEach(ws => {
+                const btn = document.createElement("button");
+                btn.className = `btn ws-btn btn-sm ${ws === currentWorkspace ? 'active' : ''}`;
+                btn.innerHTML = `<i class="bi bi-folder2-open me-2"></i> ${ws.toUpperCase()}`;
+                btn.onclick = () => switchWorkspace(ws);
+                listContainer.appendChild(btn);
+            });
+        } catch (e) { console.error("Грешка при зареждане на Workspaces:", e); }
+    }
 
-        <button class="send-btn" onclick="sendMessage()">
-            <i class="fa-solid fa-paper-plane"></i>
-        </button>
-    </div>
-
-    <script>
-        async function loadWorkspaces(selectedWs = null) {
-            try {
-                const res = await fetch('/workspaces');
-                const data = await res.json();
-                const select = document.getElementById('workspace-select');
-                select.innerHTML = '';
-                
-                data.workspaces.forEach(ws => {
-                    const opt = document.createElement('option');
-                    opt.value = ws;
-                    opt.innerText = ws.toUpperCase();
-                    if (selectedWs && ws === selectedWs) opt.selected = true;
-                    select.appendChild(opt);
-                });
-            } catch (err) { console.error('Грешка при зареждане на Workspaces', err); }
-        }
-
-        async function createNewWorkspacePrompt() {
-            const name = prompt('Въведи име на новия проект (напр. martinala, automation):');
-            if (!name) return;
-
-            try {
-                const res = await fetch('/workspaces', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: name })
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    showNotification(`Проектът '${data.workspace}' е създаден!`);
-                    await loadWorkspaces(data.workspace);
-                }
-            } catch (err) { showNotification('Грешка при създаване.', true); }
-        }
-
-        function showNotification(msg, isError = false) {
-            const notif = document.getElementById('notification');
-            notif.innerText = msg;
-            notif.style.backgroundColor = isError ? '#ef4444' : '#10b981';
-            notif.style.display = 'block';
-            setTimeout(() => { notif.style.display = 'none'; }, 4000);
-        }
-
-        function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
-
-        async function sendMessage() {
-            const input = document.getElementById('message-input');
-            const wsSelect = document.getElementById('workspace-select');
-            const message = input.value.trim();
-            if (!message) return;
-
-            const chatContainer = document.getElementById('chat-container');
-
-            const userDiv = document.createElement('div');
-            userDiv.className = 'message user';
-            userDiv.innerHTML = `<div class="bubble">${escapeHtml(message)}</div>`;
-            chatContainer.appendChild(userDiv);
-
-            input.value = '';
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-
-            try {
-                const response = await fetch('/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: message, workspace: wsSelect.value })
-                });
-
-                const data = await response.json();
-
-                if (data.new_workspace) {
-                    await loadWorkspaces(data.new_workspace);
-                }
-
-                const botDiv = document.createElement('div');
-                botDiv.className = 'message bot';
-                
-                let monologueHtml = data.monologue ? `<div class="monologue-box"><i class="fa-solid fa-brain"></i> <b>Вътрешен монолог:</b><br>${escapeHtml(data.monologue)}</div>` : '';
-
-                botDiv.innerHTML = `
-                    ${monologueHtml}
-                    <div class="bubble">${escapeHtml(data.reply)}</div>
-                    <div class="timestamp">${data.time || ''}</div>
-                `;
-
-                chatContainer.appendChild(botDiv);
-                chatContainer.scrollTop = chatContainer.scrollHeight;
-
-            } catch (err) {
-                showNotification('Грешка при комуникация.', true);
-            }
-        }
-
-        async function uploadFile() {
-            const fileInput = document.getElementById('file-input');
-            const wsSelect = document.getElementById('workspace-select');
-            if (!fileInput.files.length) return;
-
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-            formData.append('workspace', wsSelect.value);
-
-            showNotification('Качване на файл...');
-
-            try {
-                const response = await fetch('/upload', { method: 'POST', body: formData });
-                const data = await response.json();
-                showNotification(data.message, data.status !== 'success');
-            } catch (err) {
-                showNotification('Грешка при качване.', true);
-            } finally {
-                fileInput.value = '';
-            }
-        }
-
-        function escapeHtml(text) {
-            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-        }
-
-        // Зареждане при старт
+    function switchWorkspace(ws) {
+        currentWorkspace = ws;
+        document.getElementById("current-ws-title").innerText = ws.toUpperCase();
         loadWorkspaces();
-    </script>
+        document.getElementById("chat-box").innerHTML = `<div class="text-center text-muted my-4">Преминахте в Workspace: <strong>${ws.toUpperCase()}</strong></div>`;
+    }
+
+    async function createNewWorkspace() {
+        const name = prompt("Въведете име на новия Workspace:");
+        if (!name) return;
+        const res = await fetch("/workspaces", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name })
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+            switchWorkspace(data.workspace);
+        } else {
+            alert(data.message);
+        }
+    }
+
+    async function uploadFile() {
+        const fileInput = document.getElementById("file-input");
+        if (!fileInput.files[0]) return alert("Моля, изберете файл!");
+
+        const formData = new FormData();
+        formData.append("file", fileInput.files[0]);
+        formData.append("workspace", currentWorkspace);
+
+        document.getElementById("upload-status").innerText = "Синхронизиране с GitHub...";
+
+        try {
+            const res = await fetch("/upload", { method: "POST", body: formData });
+            const data = await res.json();
+            document.getElementById("upload-status").innerText = data.message;
+            fileInput.value = "";
+        } catch (e) {
+            document.getElementById("upload-status").innerText = "Грешка при качване.";
+        }
+    }
+
+    async function sendMessage(e) {
+        e.preventDefault();
+        const input = document.getElementById("user-input");
+        const msg = input.value.trim();
+        if (!msg) return;
+
+        const chatBox = document.getElementById("chat-box");
+
+        // Показване съобщение на потребителя
+        chatBox.innerHTML += `
+            <div class="message message-user">
+                <div>${msg}</div>
+            </div>
+        `;
+        input.value = "";
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        try {
+            const res = await fetch("/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: msg, workspace: currentWorkspace })
+            });
+            const data = await res.json();
+
+            // Показване монолог (ако има) и отговор
+            let monologueHTML = "";
+            if (data.monologue) {
+                monologueHTML = `
+                    <details class="monologue-box mb-2">
+                        <summary class="cursor-pointer text-warning fw-bold"><i class="bi bi-lightbulb"></i> Вътрешен монолог и логика</summary>
+                        <div class="mt-2 text-wrap" style="white-space: pre-line;">${data.monologue}</div>
+                    </details>
+                `;
+            }
+
+            chatBox.innerHTML += `
+                <div class="message message-niki">
+                    ${monologueHTML}
+                    <div style="white-space: pre-line;">${data.reply}</div>
+                    <div class="fs-8 text-muted mt-1 text-end">${data.time}</div>
+                </div>
+            `;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        } catch (e) {
+            chatBox.innerHTML += `<div class="message message-niki text-danger">Грешка при комуникация със сървъра.</div>`;
+        }
+    }
+
+    loadWorkspaces();
+</script>
 </body>
 </html>
