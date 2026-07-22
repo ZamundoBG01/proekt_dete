@@ -16,30 +16,36 @@ app = Flask(__name__)
 GROQ_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
 
-# Базова директория
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_PATH = os.path.join(BASE_DIR, "NIKI_CORE")
 
-# Модулна структура на папките
-STRUCTURE = {
-    "logs": os.path.join(BASE_PATH, "memory", "logs"),
-    "library": os.path.join(BASE_PATH, "knowledge", "library"),
-    "facts": os.path.join(BASE_PATH, "knowledge", "facts"),
-    "hypotheses": os.path.join(BASE_PATH, "knowledge", "hypotheses"),
-    "backlog": os.path.join(BASE_PATH, "knowledge", "backlog"),
-    "workspaces": os.path.join(BASE_PATH, "workspaces")
-}
+# Поддържани работни пространства (Workspaces)
+WORKSPACES = ["general", "martinala", "inventions"]
 
-for path in STRUCTURE.values():
-    os.makedirs(path, exist_ok=True)
+def get_workspace_paths(ws_name="general"):
+    """Генерира структурирани папки за конкретно работно пространство."""
+    if ws_name not in WORKSPACES:
+        ws_name = "general"
+        
+    ws_base = os.path.join(BASE_PATH, "workspaces", ws_name)
+    paths = {
+        "logs": os.path.join(ws_base, "logs"),
+        "library": os.path.join(ws_base, "library"),
+        "facts": os.path.join(ws_base, "facts"),
+        "hypotheses": os.path.join(ws_base, "hypotheses")
+    }
+    for p in paths.values():
+        os.makedirs(p, exist_ok=True)
+    return paths
 
-# Глобални променливи за векторно търсене
-vectorizer = None
-tfidf_matrix = None
-text_chunks = []
+# Инициализация на базовите папки
+for ws in WORKSPACES:
+    get_workspace_paths(ws)
+
+# Индекси за векторно търсене по workspace
+workspace_indices = {}
 
 def chunk_text(text, chunk_size=400, overlap=40):
-    """Разделя текста на малки логически пасажи."""
     words = text.split()
     chunks = []
     for i in range(0, len(words), chunk_size - overlap):
@@ -48,18 +54,16 @@ def chunk_text(text, chunk_size=400, overlap=40):
             chunks.append(chunk)
     return chunks
 
-def build_vector_index():
-    """Сканира библиотеката и изгражда олекотен векторния индекс."""
-    global vectorizer, tfidf_matrix, text_chunks
-    text_chunks = []
+def build_vector_index_for_workspace(ws_name):
+    """Изгражда векторния индекс за конкретно работно пространство."""
+    paths = get_workspace_paths(ws_name)
+    library_path = paths["library"]
     
-    library_path = STRUCTURE["library"]
-
+    chunks = []
     if os.path.exists(library_path):
         for filename in os.listdir(library_path):
             file_path = os.path.join(library_path, filename)
-            if os.path.isdir(file_path):
-                continue
+            if os.path.isdir(file_path): continue
 
             extracted_text = ""
             try:
@@ -68,88 +72,76 @@ def build_vector_index():
                         extracted_text = f.read()
                 elif filename.endswith(".docx"):
                     doc = docx.Document(file_path)
-                    extracted_text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+                    extracted_text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
                 elif filename.endswith(".pdf"):
                     reader = PdfReader(file_path)
                     for page in reader.pages:
                         extracted_text += (page.extract_text() or "") + "\n"
             except Exception as e:
-                print(f"Грешка при четене на {filename}: {e}")
+                print(f"Грешка четене {filename}: {e}")
 
             if extracted_text.strip():
-                chunks = chunk_text(extracted_text)
-                for c in chunks:
-                    text_chunks.append(f"[{filename}]: {c}")
+                for c in chunk_text(extracted_text):
+                    chunks.append(f"[{filename}]: {c}")
 
-    if text_chunks:
-        vectorizer = TfidfVectorizer(ngram_range=(1, 2))
-        tfidf_matrix = vectorizer.fit_transform(text_chunks)
-        print(f"Успешно индексирани {len(text_chunks)} текстови пасажа.")
+    if chunks:
+        vec = TfidfVectorizer(ngram_range=(1, 2))
+        mat = vec.fit_transform(chunks)
+        workspace_indices[ws_name] = {"vectorizer": vec, "matrix": mat, "chunks": chunks}
     else:
-        vectorizer = None
-        tfidf_matrix = None
+        workspace_indices[ws_name] = {"vectorizer": None, "matrix": None, "chunks": []}
 
-# Първоначално изграждане на индекса при старт
-build_vector_index()
+# Изграждане на индексите при старт
+for ws in WORKSPACES:
+    build_vector_index_for_workspace(ws)
 
-def search_relevant_knowledge(query, top_k=3):
-    """Изключително бързо и леко семантично търсене в библиотеката."""
-    global vectorizer, tfidf_matrix, text_chunks
-    if vectorizer is None or tfidf_matrix is None or not text_chunks:
-        return "Няма качени документи в библиотеката."
+def search_relevant_knowledge(ws_name, query, top_k=3):
+    idx_data = workspace_indices.get(ws_name)
+    if not idx_data or idx_data["vectorizer"] is None:
+        return "Няма документи в това работно пространство."
     
-    query_vec = vectorizer.transform([query])
-    cosine_similarities = cosine_similarity(query_vec, tfidf_matrix).flatten()
-    related_docs_indices = cosine_similarities.argsort()[::-1][:top_k]
+    query_vec = idx_data["vectorizer"].transform([query])
+    cosine_sim = cosine_similarity(query_vec, idx_data["matrix"]).flatten()
+    top_indices = cosine_sim.argsort()[::-1][:top_k]
     
-    results = []
-    for idx in related_docs_indices:
-        if cosine_similarities[idx] > 0.05:
-            results.append(text_chunks[idx])
-            
-    return "\n---\n".join(results) if results else "Няма директни съответствия в библиотеката."
+    results = [idx_data["chunks"][i] for i in top_indices if cosine_sim[i] > 0.05]
+    return "\n---\n".join(results) if results else "Няма съответствия в библиотеката."
 
-def get_stored_facts_and_hypotheses():
-    """Зарежда записаните факти и хипотези от базата данни."""
-    facts = []
-    hypotheses = []
+def get_stored_facts_and_hypotheses(ws_name):
+    paths = get_workspace_paths(ws_name)
+    facts_file = os.path.join(paths["facts"], "verified_facts.json")
+    hypo_file = os.path.join(paths["hypotheses"], "working_hypotheses.json")
     
-    facts_file = os.path.join(STRUCTURE["facts"], "verified_facts.json")
-    hypo_file = os.path.join(STRUCTURE["hypotheses"], "working_hypotheses.json")
-    
+    facts, hypotheses = [], []
     if os.path.exists(facts_file):
         try:
-            with open(facts_file, "r", encoding="utf-8") as f:
-                facts = json.load(f)
+            with open(facts_file, "r", encoding="utf-8") as f: facts = json.load(f)
         except: facts = []
-
+        
     if os.path.exists(hypo_file):
         try:
-            with open(hypo_file, "r", encoding="utf-8") as f:
-                hypotheses = json.load(f)
+            with open(hypo_file, "r", encoding="utf-8") as f: hypotheses = json.load(f)
         except: hypotheses = []
 
     return facts, hypotheses
 
-def save_fact_or_hypothesis(text, category="fact"):
-    """Записва нов факт или хипотеза."""
-    folder = STRUCTURE["facts"] if category == "fact" else STRUCTURE["hypotheses"]
+def save_fact_or_hypothesis(ws_name, text, category="fact"):
+    paths = get_workspace_paths(ws_name)
+    folder = paths["facts"] if category == "fact" else paths["hypotheses"]
     filename = "verified_facts.json" if category == "fact" else "working_hypotheses.json"
     filepath = os.path.join(folder, filename)
     
     data = []
     if os.path.exists(filepath):
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            with open(filepath, "r", encoding="utf-8") as f: data = json.load(f)
         except: data = []
         
-    entry = {
+    data.append({
         "content": text,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "priority": 100 if category == "fact" else 50
-    }
-    data.append(entry)
+    })
     
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -157,33 +149,18 @@ def save_fact_or_hypothesis(text, category="fact"):
 SYSTEM_INSTRUCTION = """
 Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) - автономна платформа за интегриране на знания, управлявана от Админ (100% ROOT достъп).
 
-СТРОГИ ПРАВИЛА ЗА ОБЩУВАНЕ:
-1. Говориш САМО в първо лице, единствено число ("Аз", "моето", "съм"). Забранено е множествено число ("ние", "нас").
-2. Никога не започвай изречение само с глагола "Съм"! Използвай "Аз съм...", "Съгласен съм...", "Готов съм...".
-3. ПРИОРИТЕТИ И КРИТИЧНО МИСЛЕНЕ:
-   - Фактите от Админ са с най-висок приоритет (+100) и са абсолютна истина.
-   - Хипотезите са идеи в процес на проверка.
-4. ВЪТРЕШЕН МОНОЛОГ (Вътрешен анализ преди отговор):
+ПРАВИЛА:
+1. Говориш САМО в първо лице, единствено число ("Аз", "моето", "съм").
+2. Никога не започвай изречение само с глагола "Съм"!
+3. Приоритети: Фактите са с най-висок приоритет (+100).
+4. Задължителен ВЪТРЕШЕН МОНОЛОГ:
 <monologue>
-[Анализ: Контекст | База Факти (+100) | Хипотези | Източник]
+[Анализ: Workspace | База Факти (+100) | Хипотези | Контекст]
 </monologue>
 """
 
 BG_TIMEZONE = timezone(timedelta(hours=3))
-chat_history = []
-
-def log_to_diary(user_msg, bot_msg, now_bg):
-    try:
-        today_str = now_bg.strftime("%Y-%m-%d")
-        time_str = now_bg.strftime("%H:%M:%S")
-        diary_file = os.path.join(STRUCTURE["logs"], f"diary_{today_str}.txt")
-        
-        with open(diary_file, "a", encoding="utf-8") as f:
-            f.write(f"[{time_str}] АДМИН: {user_msg}\n")
-            f.write(f"[{time_str}] N.I.K.I.: {bot_msg}\n")
-            f.write("-" * 50 + "\n")
-    except Exception as e:
-        print(f"Грешка при запис в дневника: {e}")
+chat_history = {}
 
 @app.route("/")
 def index_page():
@@ -191,7 +168,9 @@ def index_page():
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
-    """Руут за директно качване на файлове в библиотеката."""
+    ws_name = request.form.get("workspace", "general")
+    paths = get_workspace_paths(ws_name)
+    
     if "file" not in request.files:
         return jsonify({"status": "error", "message": "Няма прикачен файл."})
     
@@ -199,57 +178,57 @@ def upload_file():
     if file.filename == "":
         return jsonify({"status": "error", "message": "Не е избран файл."})
         
-    allowed_extensions = {".txt", ".pdf", ".docx"}
     ext = os.path.splitext(file.filename)[1].lower()
-    
-    if ext not in allowed_extensions:
-        return jsonify({"status": "error", "message": f"Неподдържан формат. Позволени: {allowed_extensions}"})
+    if ext not in {".txt", ".pdf", ".docx"}:
+        return jsonify({"status": "error", "message": "Неподдържан формат."})
         
     filename = secure_filename(file.filename)
-    save_path = os.path.join(STRUCTURE["library"], filename)
+    save_path = os.path.join(paths["library"], filename)
     file.save(save_path)
     
-    build_vector_index()
-    return jsonify({"status": "success", "message": f"Файлът '{filename}' беше качен и индексиран във векторната памет успешно!"})
+    build_vector_index_for_workspace(ws_name)
+    return jsonify({"status": "success", "message": f"Файлът '{filename}' е качен в Workspace [{ws_name.upper()}]!"})
 
 @app.route("/chat", methods=["POST"])
 def chat():
     if not client:
         return jsonify({"reply": "⚠️ Липсва GROQ_API_KEY!", "monologue": "", "time": ""})
 
-    user_message = request.json.get("message", "")
+    data = request.json or {}
+    user_message = data.get("message", "")
+    ws_name = data.get("workspace", "general")
+    
     now_bg = datetime.now(BG_TIMEZONE)
     current_time_info = now_bg.strftime("%d.%m.%Y %H:%M")
 
-    # Автоматично засичане на команди за Запазване на Факт / Хипотеза
     if user_message.lower().startswith("факт:"):
-        fact_text = user_message[5:].strip()
-        save_fact_or_hypothesis(fact_text, "fact")
+        save_fact_or_hypothesis(ws_name, user_message[5:].strip(), "fact")
     elif user_message.lower().startswith("хипотеза:"):
-        hypo_text = user_message[9:].strip()
-        save_fact_or_hypothesis(hypo_text, "hypothesis")
+        save_fact_or_hypothesis(ws_name, user_message[9:].strip(), "hypothesis")
 
-    # Извличане на контекст от Библиотеката, Фактите и Хипотезите
-    retrieved_context = search_relevant_knowledge(user_message)
-    facts, hypotheses = get_stored_facts_and_hypotheses()
+    retrieved_context = search_relevant_knowledge(ws_name, user_message)
+    facts, hypotheses = get_stored_facts_and_hypotheses(ws_name)
 
-    facts_str = "\n".join([f"- {f['content']}" for f in facts[-5:]]) if facts else "Няма записани факти."
-    hypo_str = "\n".join([f"- {h['content']}" for h in hypotheses[-5:]]) if hypotheses else "Няма записани хипотези."
+    facts_str = "\n".join([f"- {f['content']}" for f in facts[-5:]]) if facts else "Няма факти."
+    hypo_str = "\n".join([f"- {h['content']}" for h in hypotheses[-5:]]) if hypotheses else "Няма хипотези."
 
     messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
     
     context_prefix = (
-        f"[СИСТЕМЕН МАРКЕР ВРЕМЕ: {current_time_info}]\n"
-        f"[ПОТВЪРДЕНИ ФАКТИ (Приоритет +100)]:\n{facts_str}\n\n"
-        f"[РАБОТНИ ХИПОТЕЗИ]:\n{hypo_str}\n\n"
-        f"[ВЕКТОРНО ИЗВЛЕЧЕНИ ЗНАНИЯ ОТ LIBRARY]:\n{retrieved_context}\n\n"
+        f"[АКТИВЕН WORKSPACE: {ws_name.upper()}]\n"
+        f"[ВРЕМЕ: {current_time_info}]\n"
+        f"[ФАКТИ (+100)]:\n{facts_str}\n\n"
+        f"[ХИПОТЕЗИ]:\n{hypo_str}\n\n"
+        f"[ИЗВЛЕЧЕНИ ЗНАНИЯ]:\n{retrieved_context}\n\n"
     )
     
-    for msg in chat_history[-6:]:
+    if ws_name not in chat_history:
+        chat_history[ws_name] = []
+        
+    for msg in chat_history[ws_name][-6:]:
         messages.append(msg)
 
-    current_user_payload = f"{context_prefix}[ИЗТОЧНИК: АДМИН (ПРИОРИТЕТ: +100)]\n{user_message}"
-    messages.append({"role": "user", "content": current_user_payload})
+    messages.append({"role": "user", "content": f"{context_prefix}[ИЗТОЧНИК: АДМИН]\n{user_message}"})
 
     try:
         completion = client.chat.completions.create(
@@ -266,10 +245,8 @@ def chat():
             
         clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
         
-        chat_history.append({"role": "user", "content": user_message})
-        chat_history.append({"role": "assistant", "content": clean_reply})
-
-        log_to_diary(user_message, clean_reply, now_bg)
+        chat_history[ws_name].append({"role": "user", "content": user_message})
+        chat_history[ws_name].append({"role": "assistant", "content": clean_reply})
 
         return jsonify({
             "reply": clean_reply, 
