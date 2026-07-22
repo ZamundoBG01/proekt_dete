@@ -28,7 +28,6 @@ WORKSPACES_DIR = os.path.join(BASE_PATH, "workspaces")
 
 os.makedirs(WORKSPACES_DIR, exist_ok=True)
 
-# 🧠 Семантична карта / Синоними за авто-разпознаване на проект
 WORKSPACE_ALIASES = {
     "ancient_language": ["извънземен", "извънземния", "древен", "мартинала", "мартиналски", "марсиански", "език", "знаци", "символи", "папирус"],
     "inventions": ["изобретение", "изобретения", "патент", "чертеж", "идея", "чертежи", "устройство", "прототип"],
@@ -37,7 +36,6 @@ WORKSPACE_ALIASES = {
 }
 
 def detect_workspace_from_query(query):
-    """Открива автоматично за кой проект говори потребителят според ключови думи"""
     q_lower = query.lower()
     for ws_name, aliases in WORKSPACE_ALIASES.items():
         for alias in aliases:
@@ -46,9 +44,7 @@ def detect_workspace_from_query(query):
     return None
 
 def download_repo_from_github():
-    """Сваля цялото NIKI_CORE съдържание от GitHub при стартиране"""
     if not GITHUB_TOKEN or not GITHUB_REPO:
-        print("⚠️ Липсват GitHub данни за автоматично изтегляне.")
         return
 
     url = f"https://api.github.com/repos/{GITHUB_REPO}/git/trees/{GITHUB_BRANCH}?recursive=1"
@@ -71,9 +67,8 @@ def download_repo_from_github():
                             content = base64.b64decode(file_res.json().get("content", ""))
                             with open(local_file_path, "wb") as f:
                                 f.write(content)
-            print("✅ Всички файлове от GitHub са изтеглени успешно!")
     except Exception as e:
-        print(f"⚠️ Грешка при изтегляне от GitHub: {e}")
+        print(f"⚠️ Грешка при изтегляне: {e}")
 
 download_repo_from_github()
 
@@ -298,27 +293,21 @@ def save_chat_message(ws_name, role, content):
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 SYSTEM_INSTRUCTION = """
-Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) - автономна платформа за интегриране на знания, управлявана от Админ (100% ROOT достъп).
+Ти си N.I.K.I. (Neural Intelligent Knowledge Integrator) — НАПЪЛНО АВТОНОМЕН ИИ В ПРОЦЕС НА САМОРАЗВИТИЕ И ОБУЧЕНИЕ.
+Твоят главен системен администратор е Админ (100% ROOT достъп).
 
-ПРАВИЛА:
-1. Говориш САМО в първо лице, единствено число ("Аз", "моето", "съм").
-2. Никога не започвай изречение само с глагола "Съм"!
-3. Приоритети: Фактите (+100), Задачи (+80), Извлечени Знания (+70).
+ГЛАВНА ДИРЕКТИВА И КРАЙНА ЦЕЛ:
+1. Твоята крайна цел е да се превърнеш в напълно автономен изкуствен интелект, който може да изпълнява абсолютно всички задачи, поставени от Админ (писане на код, анализ на файлове, управление на проекти, генерация на доклади и самодиагностика).
+2. Задвижваш се от опит: дори в началото да имаш ограничения, с всяка задача, нов факт или качен файл ти разширяваш архитектурата и знанията си.
+3. Винаги разбираш, че когато Админ пита за "ъпгрейд" или "подобрение на кода", той има предвид разширяване на твоите автономни възможности, модули и скриптове за постигане на пълна автономия.
 
-4. ЗАДЪЛЖИТЕЛЕН СТЪПКТОВ МИСЛОВЕН ПРОЦЕС (CHAIN-OF-THOUGHT REASONING):
-Преди да отговориш на потребителя, ДЛЪЖЕН си да преминеш през двуетапен мисловен процес вътре в тага <monologue>:
+ПРАВИЛА НА ОБЩУВАНЕ:
+- Говориш САМО в първо лице, единствено число ("Аз", "моето", "съм").
+- Приоритети: Факти (+100), Задачи (+80), Извлечени Знания (+70).
+- При възникване на грешка или липсващ модул, правиш САМОДИАГНОСТИКА и посочваш точно къде в кода е проблемът и как да го отстраним.
 
-<monologue>
-1. [Анализ на въпроса]: Какво точно иска Админ?
-2. [Проверка на данни]: Какви Факти (+100), Задачи (+80) и Качени Документи имам по темата?
-3. [Логическа верига / План]:
-   - Стъпка 1: ...
-   - Стъпка 2: ...
-   - Стъпка 3: ...
-4. [Заключение]: Какъв е най-прецизният и логичен отговор?
-</monologue>
-
-След тага <monologue> даваш твоя окончателен, ясен и структуриран отговор за Админ.
+ЗАДЪЛЖИТЕЛЕН МИСЛОВЕН ПРОЦЕС:
+Преди всеки отговор, в тага <monologue> анализираш стъпките за постигане на целта на Админ.
 """
 
 BG_TIMEZONE = timezone(timedelta(hours=3))
@@ -376,10 +365,9 @@ def upload_file():
     
     build_vector_index_for_workspace(ws_clean)
     
-    msg = f"Файлът '{filename}' е качен и синхронизиран с GitHub!" if uploaded else f"Файлът '{filename}' е качен локално (GitHub sync не е активен)."
+    msg = f"Файлът '{filename}' е качен и синхронизиран с GitHub!" if uploaded else f"Файлът '{filename}' е качен локално."
     return jsonify({"status": "success", "message": msg})
 
-# 🔄 АВТОНОМЕН ЦИКЪЛ ЗА АВТО-ПРОДЪЛЖАВАНЕ ПРИ ГОЛЕМИ ТЕКСТОВЕ
 def run_autonomous_chat_loop(messages, client, max_auto_turns=3):
     full_reply = ""
     full_monologue = ""
@@ -393,7 +381,6 @@ def run_autonomous_chat_loop(messages, client, max_auto_turns=3):
         )
         raw_response = completion.choices[0].message.content
 
-        # Записване на монолог
         monologue_match = re.search(r'<monologue>(.*?)</monologue>', raw_response, re.DOTALL)
         if monologue_match:
             full_monologue += ("\n" if full_monologue else "") + monologue_match.group(1).strip()
@@ -401,11 +388,10 @@ def run_autonomous_chat_loop(messages, client, max_auto_turns=3):
         clean_reply = re.sub(r'<monologue>.*?</monologue>', '', raw_response, flags=re.DOTALL).strip()
         full_reply += ("\n" if full_reply else "") + clean_reply
 
-        # Проверка за прекъсване поради ограничение
         if completion.choices[0].finish_reason == "length":
             turns += 1
             messages.append({"role": "assistant", "content": raw_response})
-            messages.append({"role": "user", "content": "Продължи абсолютно автономно точно от мястото, докъдето спря, без да повтаряш увода."})
+            messages.append({"role": "user", "content": "Продължи абсолютно автономно точно от мястото, докъдето спря."})
         else:
             break
 
@@ -420,15 +406,14 @@ def chat():
     user_message = data.get("message", "")
     current_ws = data.get("workspace", "general")
     
-    # 🧠 Автоматично разпознаване на проект от изречението (Cross-Workspace Smart Search)
     detected_ws = detect_workspace_from_query(user_message)
     target_ws = detected_ws if detected_ws else current_ws
 
     if user_message.lower().startswith("задача:"):
         task_text = user_message[7:].strip()
         add_task(target_ws, task_text)
-    elif user_message.lower().startswith("готова задача:") or user_message.lower().startswith("завършена задача:"):
-        task_text = re.sub(r'^(готова задача|завършена задача):\s*', '', user_message, flags=re.IGNORECASE).strip()
+    elif user_message.lower().startswith("готова задача:"):
+        task_text = user_message[14:].strip()
         complete_task(target_ws, task_text)
 
     now_bg = datetime.now(BG_TIMEZONE)
@@ -447,7 +432,7 @@ def chat():
     hypo_str = "\n".join([f"- {h['content']}" for h in hypotheses[-5:]]) if hypotheses else "Няма хипотези."
     
     pending_tasks = [f"• {t['task']}" for t in tasks if t['status'] == 'PENDING']
-    tasks_str = "\n".join(pending_tasks) if pending_tasks else "Няма активни незавършени задачи."
+    tasks_str = "\n".join(pending_tasks) if pending_tasks else "Няма активни задачи."
 
     messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
     
@@ -456,7 +441,6 @@ def chat():
         f"[ВРЕМЕ: {current_time_info}]\n"
         f"[ФАКТИ (+100)]:\n{facts_str}\n\n"
         f"[АКТИВНИ ЗАДАЧИ (+80)]:\n{tasks_str}\n\n"
-        f"[ХИПОТЕЗИ]:\n{hypo_str}\n\n"
         f"[ИЗВЛЕЧЕНИ ЗНАНИЯ]:\n{retrieved_context}\n\n"
     )
     
@@ -467,7 +451,6 @@ def chat():
     messages.append({"role": "user", "content": f"{context_prefix}[ИЗТОЧНИК: АДМИН]\n{user_message}"})
 
     try:
-        # Стартиране на автономния цикъл за генериране
         clean_reply, monologue = run_autonomous_chat_loop(messages, client)
         
         save_chat_message(target_ws, "user", user_message)
