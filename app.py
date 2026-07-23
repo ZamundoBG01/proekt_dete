@@ -7,6 +7,8 @@ from flask import Flask, render_template, request, jsonify
 from groq import Groq
 import pypdf
 import docx
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 
@@ -14,7 +16,54 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACES_DIR = os.path.join(BASE_DIR, "NIKI_CORE", "workspaces")
 
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
 groq_client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
+
+# --- ИНИЦИАЛИЗАЦИЯ НА БАЗАТА ДАННИ ---
+def get_db_connection():
+    if not DATABASE_URL:
+        return None
+    try:
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        return conn
+    except Exception as e:
+        print(f"Грешка при връзка с DB: {e}")
+        return None
+
+def init_db():
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                # Таблица за факти
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS verified_facts (
+                        id SERIAL PRIMARY KEY,
+                        workspace VARCHAR(100) NOT NULL,
+                        content TEXT NOT NULL,
+                        category VARCHAR(100),
+                        confidence INT DEFAULT 100,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                # Таблица за причинно-следствени вериги
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS causal_chains (
+                        id SERIAL PRIMARY KEY,
+                        workspace VARCHAR(100) NOT NULL,
+                        cause TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                conn.commit()
+        except Exception as e:
+            print(f"Грешка при създаване на таблици: {e}")
+        finally:
+            conn.close()
+
+# Стартираме базата при пускане
+init_db()
 
 def sanitize_ws_name(name):
     if not name:
@@ -76,32 +125,85 @@ def extract_text_from_file(file_path):
         print(f"Грешка при извличане на текст от {file_path}: {e}")
     return extracted_text.strip()
 
-def safe_read_json(file_path):
-    if os.path.exists(file_path):
+# --- ФУНКЦИИ ЗА РАБОТА С ФАКТИ (DB + ФАЙЛОВЕН БЕКЪП) ---
+def get_workspace_facts(ws_name):
+    conn = get_db_connection()
+    if conn:
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, list) else []
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT content, category, confidence, created_at FROM verified_facts WHERE workspace = %s ORDER BY id ASC;", (ws_name,))
+                rows = cur.fetchall()
+                facts = []
+                for r in rows:
+                    facts.append({
+                        "content": r["content"],
+                        "category": r["category"],
+                        "confidence": r["confidence"],
+                        "timestamp": r["created_at"].strftime("%Y-%m-%d %H:%M:%S") if r["created_at"] else ""
+                    })
+                return facts
         except Exception as e:
-            print(f"Грешка при четене на {file_path}: {e}")
-            return []
+            print(f"DB Read Error: {e}")
+        finally:
+            conn.close()
+
+    # Резервен вариант през JSON
+    facts_path = os.path.join(WORKSPACES_DIR, ws_name, "facts", "verified_facts.json")
+    if os.path.exists(facts_path):
+        try:
+            with open(facts_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except: return []
     return []
 
-def safe_write_json(file_path, data):
-    try:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return True
-    except Exception as e:
-        print(f"Грешка при запис в {file_path}: {e}")
-        return False
+def add_workspace_fact(ws_name, content, category="ДИРЕКТЕН ЗАПИС"):
+    conn = get_db_connection()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO verified_facts (workspace, content, category) VALUES (%s, %s, %s);", (ws_name, content, category))
+                cur.execute("INSERT INTO causal_chains (workspace, cause) VALUES (%s, %s);", (ws_name, content))
+                conn.commit()
+        except Exception as e:
+            print(f"DB Write Error: {e}")
+        finally:
+            conn.close()
 
-def call_ai_engine(prompt, context_facts=[], file_list=[], library_context="", causal_graph=[]):
+    # Записваме и във файловата система като бекъп
+    ws_path = os.path.join(WORKSPACES_DIR, ws_name, "facts")
+    os.makedirs(ws_path, exist_ok=True)
+    facts_file = os.path.join(ws_path, "verified_facts.json")
+    
+    existing = []
+    if os.path.exists(facts_file):
+        try:
+            with open(facts_file, "r", encoding="utf-8") as f: existing = json.load(f)
+        except: existing = []
+    
+    existing.append({"content": content, "timestamp": now_str, "confidence": 100, "category": category})
+    try:
+        with open(facts_file, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+    except: pass
+
+def clear_workspace_data(ws_name):
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM verified_facts WHERE workspace = %s;", (ws_name,))
+                cur.execute("DELETE FROM causal_chains WHERE workspace = %s;", (ws_name,))
+                conn.commit()
+        except Exception as e: print(f"DB Clear Error: {e}")
+        finally: conn.close()
+
+# --- AI ДВИГАТЕЛ ЗА "ЕФЕКТА НА ПЕПЕРУДАТА" ---
+def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
     if not groq_client:
         return {
             "reply": f"Обработена инструкция: {prompt}",
-            "thought": "Липсва GROQ_API_KEY. Системата работи в локален режим."
+            "thought": "Липсва GROQ_API_KEY."
         }
 
     try:
@@ -110,28 +212,27 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context="", c
         system_instructions = f"""
         Ти си N.I.K.I. - архитект на логиката и симулациите ("Ефекта на пеперудата") за писатели и гейм-разработчици.
 
-        СПИСЪК НА ВСИЧКИ ФАЙЛОВЕ В БИБЛИОТЕКАТА ({len(file_list)} бр.):
+        СПИСЪК НА ФАЙЛОВЕ В БИБЛИОТЕКАТА:
         [{files_str}]
 
-        ПРОВЕРЕНИ ФАКТИ В ПРОЕКТА:
+        ПРОВЕРЕНИ ФАКТИ И ПРАВИЛА В ТОЗИ ПРОЕКТ/СВЯТ:
         {json.dumps(context_facts, ensure_ascii=False)}
 
-        ВЕРИГИ НА ПРИЧИННО-СЛЕДСТВЕНИ ВРЪЗКИ:
-        {json.dumps(causal_graph, ensure_ascii=False)}
-
         СЪДЪРЖАНИЕ НА КАЧЕНИТЕ ФАЙЛОВЕ:
-        {library_context[:6000] if library_context else 'Няма допълнителен текст в файловете.'}
+        {library_context[:6000] if library_context else 'Няма допълнителен текст.'}
 
         ПРАВИЛА ЗА РАБОТА С "ЕФЕКТА НА ПЕПЕРУДАТА":
-        1. Ако има логически конфликт с базовите факти, ЗАДЪЛЖИТЕЛНО започни с:
-           "⚠️ **ЛОГИЧЕСКА АЛАРМА (Ефект на пеперудата):**" и обясни грешката.
+        1. Ако има директен конфликт с фактите, ЗАДЪЛЖИТЕЛНО започни с:
+           "⚠️ **ЛОГИЧЕСКА АЛАРМА (Ефект на пеперудата):**" и обясни защо.
 
-        2. Когато потребителят поиска АНАЛИЗ, СИМУЛАЦИЯ или ПРЕДСКАЗАНИЕ за промяна на елемент:
-           - Раздели отговора си на две ясни секции:
-             А) 🔒 **ТВЪРДА ДЕТЕРМИНИРАНА ВЕРИГА (Неизбежни последствия):**
-                Проследи стъпка по стъпка физическите и пряко дефинирани логически последици от промяната от А до Я.
-             Б) 🎲 **СИМУЛАЦИЯ НА 10 СЦЕНАРИЯ (Варианти с вероятности):**
-                Изброи до 10 възможни развиващи се разклонения. За всеки вариант посочи процентова вероятност (напр. Вариант 3/10 - 75% вероятност) и обясни кратко защо това е най-вероятният сценарий.
+        2. Когато провеждаш АНАЛИЗ или СИМУЛАЦИЯ на промяна:
+           - **Секция 1: 🔒 ТВЪРДА ДЕТЕРМИНИРАНА ВЕРИГА (Неизбежни преки последици)**
+             Проследи стъпка по стъпка физическите, икономическите и пряко дефинирани логически последици от А до Я.
+             
+           - **Секция 2: 🎲 СИМУЛАЦИЯ НА 10 ВАРИАНТА (Спонтанни вторични променливи)**
+             Изброи до 10 развиващи се разклонения. 
+             ВАЖНО: За ВСЕКИ вариант НЕ просто описвай прякото действие, а **генерирай СПОНТАННА ВТОРИЧНА ПРОМЕНЛИВА** (нов герой, ненадеен ресурс, революция, нов конфликт, природно събитие), която се поражда от ситуацията.
+             Посочи процентна вероятност (напр. *Вариант 3/10 - 70% вероятност*) и обясни как тази нова променлива отваря **ИЗЦЯЛО НОВ СЮЖЕТЕН КЛОН** за писателя/разработчика.
 
         3. Отговаряй ВИНАГИ на правилен български език.
         """
@@ -142,8 +243,8 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context="", c
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.4,
-            max_tokens=2000
+            temperature=0.5,
+            max_tokens=2500
         )
 
         raw_reply = response.choices[0].message.content
@@ -151,7 +252,7 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context="", c
 
         return {
             "reply": cleaned_reply,
-            "thought": f"AI Engine: Groq (Llama 3.3 70B)\n- Сканирани факти: {len(context_facts)}\n- Логически вериги: {len(causal_graph)}\n- Файлове в библиотека: {len(file_list)}"
+            "thought": f"AI Engine: Groq (Llama 3.3 70B)\n- Използвани базисни факти: {len(context_facts)}\n- Файлове в библиотеката: {len(file_list)}"
         }
     except Exception as e:
         return {
@@ -172,16 +273,10 @@ def handle_workspaces():
         data = request.get_json() or {}
         raw_name = data.get("name", "")
         ws_name = sanitize_ws_name(raw_name)
-        
         if ws_name:
             ws_path = os.path.join(WORKSPACES_DIR, ws_name)
             os.makedirs(os.path.join(ws_path, "facts"), exist_ok=True)
-            os.makedirs(os.path.join(ws_path, "tasks"), exist_ok=True)
             os.makedirs(os.path.join(ws_path, "library"), exist_ok=True)
-            
-            facts_file = os.path.join(ws_path, "facts", "verified_facts.json")
-            if not os.path.exists(facts_file):
-                safe_write_json(facts_file, [])
 
         return jsonify({"status": "success", "workspace": ws_name})
 
@@ -199,25 +294,17 @@ def handle_workspaces():
 @app.route("/workspace_data/<path:ws_name>")
 def workspace_data(ws_name):
     clean_ws = sanitize_ws_name(ws_name)
-    ws_path = os.path.join(WORKSPACES_DIR, clean_ws)
+    facts = get_workspace_facts(clean_ws)
 
-    facts_path = os.path.join(ws_path, "facts", "verified_facts.json")
-    facts = safe_read_json(facts_path)
-
-    tasks_path = os.path.join(ws_path, "tasks", "backlog.json")
-    tasks = safe_read_json(tasks_path)
-
-    library_path = os.path.join(ws_path, "library")
+    library_path = os.path.join(WORKSPACES_DIR, clean_ws, "library")
     files = []
     if os.path.exists(library_path) and os.path.isdir(library_path):
-        try:
-            files = os.listdir(library_path)
-        except Exception:
-            files = []
+        try: files = os.listdir(library_path)
+        except: files = []
 
     return jsonify({
         "facts": facts,
-        "tasks": tasks,
+        "tasks": [],
         "files": files
     })
 
@@ -230,16 +317,10 @@ def chat():
     if not message:
         return jsonify({"reply": "Моля, въведете инструкция.", "monologue": None})
 
-    ws_path = os.path.join(WORKSPACES_DIR, active_ws)
-    facts_path = os.path.join(ws_path, "facts", "verified_facts.json")
-    causal_path = os.path.join(ws_path, "facts", "causal_graph.json")
-    
-    existing_facts = safe_read_json(facts_path)
-    causal_graph = safe_read_json(causal_path)
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    existing_facts = get_workspace_facts(active_ws)
 
-    # Списък и четене на файлове
-    library_path = os.path.join(ws_path, "library")
+    # Четене на файлове
+    library_path = os.path.join(WORKSPACES_DIR, active_ws, "library")
     file_list = []
     library_text = ""
     if os.path.exists(library_path):
@@ -249,46 +330,24 @@ def chat():
             extracted = extract_text_from_file(fpath)
             library_text += f"\n--- ФАЙЛ: {fname} ---\n" + (extracted if extracted else "[ПРАЗЕН ФАЙЛ]")
 
-    # ГЪВКАВА КОМАНДА ЗА ИЗТРИВАНЕ НА ПРОЕКТ/ДИРЕКТОРИЯ
+    # ГЪВКАВА КОМАНДА ЗА ИЗТРИВАНЕ
     match_del = re.match(r"^(изтрий|премахни)(\s+проект|\s+директория)?\s+(.+)$", message, re.IGNORECASE)
     if match_del:
         target_ws = sanitize_ws_name(match_del.group(3))
         if target_ws == "general":
             return jsonify({"reply": "⚠️ Основният проект **GENERAL** не може да бъде изтрит.", "monologue": "Отказано изтриване."})
         
+        clear_workspace_data(target_ws)
         target_path = os.path.join(WORKSPACES_DIR, target_ws)
         if os.path.exists(target_path):
             shutil.rmtree(target_path)
-            return jsonify({"reply": f"🗑️ Проектът/директорията **{target_ws.upper()}** беше изтрит(а) завинаги.", "monologue": f"Изтриване: {target_ws}", "target_workspace": "general"})
-        else:
-            return jsonify({"reply": f"❌ Не бе намерен проект или директория с име **{target_ws.upper()}**.", "monologue": "Несъществуващ проект."})
 
-    # ГЪВКАВА КОМАНДА ЗА ПРЕИМЕНУВАНЕ НА ПРОЕКТ
-    match_ren = re.match(r"^(преименувай)(\s+проект|\s+директория)?\s+(.+)\s+на\s+(.+)$", message, re.IGNORECASE)
-    if match_ren:
-        old_ws = sanitize_ws_name(match_ren.group(3))
-        new_ws = sanitize_ws_name(match_ren.group(4))
-
-        if old_ws == "general":
-            return jsonify({"reply": "⚠️ Основният проект **GENERAL** не може да бъде преименуван.", "monologue": "Отказана операция."})
-
-        old_path = os.path.join(WORKSPACES_DIR, old_ws)
-        new_path = os.path.join(WORKSPACES_DIR, new_ws)
-
-        if not os.path.exists(old_path):
-            return jsonify({"reply": f"❌ Проектът **{old_ws}** не съществува.", "monologue": "Грешка при преименуване."})
-
-        if os.path.exists(new_path):
-            return jsonify({"reply": f"⚠️ Вече съществува проект с име **{new_ws}**.", "monologue": "Дублирано име."})
-
-        os.rename(old_path, new_path)
-        return jsonify({"reply": f"✏️ Проектът **{old_ws.upper()}** беше преименуван на **{new_ws.upper()}**.", "monologue": "Успешно преименуване.", "target_workspace": new_ws})
+        return jsonify({"reply": f"🗑️ Проектът/директорията **{target_ws.upper()}** беше изтрит(а) завинаги (и от базата данни).", "monologue": f"Изтриване: {target_ws}", "target_workspace": "general"})
 
     if "изтрий всичко" in message.lower():
-        safe_write_json(facts_path, [])
-        safe_write_json(causal_path, [])
+        clear_workspace_data(active_ws)
         return jsonify({
-            "reply": f"🗑️ Всички факти и логически вериги в проект **{active_ws.upper()}** бяха изчистени.",
+            "reply": f"🗑️ Всички факти в проект **{active_ws.upper()}** бяха изчистени от базата данни.",
             "monologue": "Изчистване на локалната база данни.",
             "target_workspace": active_ws
         })
@@ -300,20 +359,10 @@ def chat():
         if not clean_text:
             clean_text = message
 
-        new_fact = {
-            "content": clean_text,
-            "timestamp": now_str,
-            "confidence": 100,
-            "category": "ДИРЕКТЕН ЗАПИС"
-        }
-        existing_facts.append(new_fact)
-        safe_write_json(facts_path, existing_facts)
+        add_workspace_fact(active_ws, clean_text)
 
-        causal_graph.append({"cause": clean_text, "added_on": now_str})
-        safe_write_json(causal_path, causal_graph)
-
-        reply = f"✅ Записах следното във фактите и логическата верига на **{active_ws.upper()}**:\n\n> \"{clean_text}\""
-        monologue = f"Запис във фактите:\n- Съдържание: '{clean_text}'\n- Проект: {active_ws.upper()}"
+        reply = f"✅ Записах следното за постоянно в базата данни на **{active_ws.upper()}**:\n\n> \"{clean_text}\""
+        monologue = f"Запис в базата данни:\n- Съдържание: '{clean_text}'\n- Проект: {active_ws.upper()}"
 
         return jsonify({
             "reply": reply,
@@ -321,7 +370,7 @@ def chat():
             "target_workspace": active_ws
         })
 
-    ai_result = call_ai_engine(message, existing_facts, file_list, library_text, causal_graph)
+    ai_result = call_ai_engine(message, existing_facts, file_list, library_text)
 
     return jsonify({
         "reply": ai_result["reply"],
