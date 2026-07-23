@@ -75,16 +75,9 @@ def init_db():
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
-                # Миграция: Добавяне на колоната monologue, ако съществуващата база я няма
+                # Автоматично добавяне на липсващата колона monologue
                 cur.execute("""
-                    DO $$ 
-                    BEGIN 
-                        BEGIN
-                            ALTER TABLE chat_history ADD COLUMN monologue TEXT;
-                        EXCEPTION
-                            WHEN duplicate_column THEN THEN NULL;
-                        END;
-                    END $$;
+                    ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS monologue TEXT;
                 """)
                 conn.commit()
         except Exception as e:
@@ -103,7 +96,6 @@ def clean_ai_response(text):
     if not text:
         return text
     
-    # Коригиране на латинско-кирилски хибридни думи
     fixes = {
         r"\bfascиниращ\b": "фасциниращ",
         r"\bfascинираща\b": "фасцинираща",
@@ -142,7 +134,6 @@ def extract_text_from_file(file_path):
     return extracted_text.strip()
 
 def save_text_as_docx(ws_name, filename, title, content):
-    """ Генерира форматиран Word (.docx) документ и го запазва в библиотеката на проекта """
     library_path = os.path.join(WORKSPACES_DIR, sanitize_ws_name(ws_name), "library")
     os.makedirs(library_path, exist_ok=True)
     
@@ -281,7 +272,6 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
         }
 
 def auto_run_worker(ws_name, initial_prompt, cycles=3):
-    """ Бекграунд функция за 24/7 самостоятелно генериране и разклоняване """
     print(f"🚀 Стартиран Auto-Run за проект '{ws_name}' с {cycles} цикъла.")
     current_prompt = initial_prompt
     
