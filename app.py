@@ -75,9 +75,20 @@ def init_db():
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+                # Миграция: Добавяне на колоната monologue, ако съществуващата база я няма
+                cur.execute("""
+                    DO $$ 
+                    BEGIN 
+                        BEGIN
+                            ALTER TABLE chat_history ADD COLUMN monologue TEXT;
+                        EXCEPTION
+                            WHEN duplicate_column THEN THEN NULL;
+                        END;
+                    END $$;
+                """)
                 conn.commit()
         except Exception as e:
-            print(f"Грешка при създаване на таблици: {e}")
+            print(f"Грешка при създаване/миграция на таблици: {e}")
         finally:
             conn.close()
 
@@ -91,7 +102,13 @@ def sanitize_ws_name(name):
 def clean_ai_response(text):
     if not text:
         return text
+    
+    # Коригиране на латинско-кирилски хибридни думи
     fixes = {
+        r"\bfascиниращ\b": "фасциниращ",
+        r"\bfascинираща\b": "фасцинираща",
+        r"\bfascиниращо\b": "фасциниращо",
+        r"\bfascиниращи\b": "фасциниращи",
         r"\bСъм съгласен\b": "Съгласен съм",
         r"\bАз съм съгласен\b": "Съгласен съм",
         r"\bСъм готов\b": "Готов съм"
@@ -240,7 +257,7 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
         3. Когато провеждаш АНАЛИЗ или СИМУЛАЦИЯ на промяна ("Ефекта на пеперудата"):
            - **Секция 1: 🔒 ТВЪРДА ДЕТЕРМИНИРАНА ВЕРИГА (Неизбежни преки последици)**
            - **Секция 2: 🎲 СИМУЛАЦИЯ НА 10 ВАРИАНТА (Спонтанни вторични променливи)**
-        4. Отговаряй ВИНАГИ на чист и правилен български език.
+        4. Отговаряй ВИНАГИ на чист и правилен български език. ЗАБРАНЕНО Е смесването на латински букви в български думи (напр. НЕ пиши 'fascиниращ', а 'фасциниращ').
         """
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -275,7 +292,6 @@ def auto_run_worker(ws_name, initial_prompt, cycles=3):
         reply_msg = f"🔄 **[Auto-Run Цикъл {i}/{cycles}]**\n\n" + ai_res["reply"]
         save_chat_message(ws_name, "niki", reply_msg, ai_res["thought"])
         
-        # Автоматично запазваме резултата от цикъла като Word документ
         doc_filename = f"autorun_cycle_{i}_{int(time.time())}.docx"
         save_text_as_docx(ws_name, doc_filename, f"Auto-Run Симулация - Цикъл {i}", ai_res["reply"])
         
@@ -409,7 +425,6 @@ def chat():
 
     ai_result = call_ai_engine(message, existing_facts, file_list, library_text)
 
-    # Автоматично създаваме Word документ, ако отговорът съдържа детайлна симулация
     if "СЕКЦИЯ" in ai_result["reply"].upper() or len(ai_result["reply"]) > 1000:
         doc_name = f"simulation_{int(time.time())}.docx"
         save_text_as_docx(active_ws, doc_name, "N.I.K.I. Симулационен Доклад", ai_result["reply"])
