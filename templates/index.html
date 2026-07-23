@@ -12,17 +12,30 @@
         .sidebar { background-color: #0f172a; border-right: 1px solid #1e293b; height: 100vh; display: flex; flex-direction: column; }
         .main-chat { height: 100vh; display: flex; flex-direction: column; background-color: #0b1120; }
         .right-sidebar { background-color: #0f172a; border-left: 1px solid #1e293b; height: 100vh; overflow-y: auto; }
-        .chat-box { flex: 1; overflow-y: auto; padding: 20px; }
-        .message-user { background-color: #1e293b; color: #f8fafc; border-radius: 12px; padding: 12px 16px; margin-bottom: 15px; max-width: 85%; align-self: flex-end; float: right; clear: both; }
-        .message-niki { background-color: #1e1b4b; color: #e0e7ff; border: 1px solid #312e81; border-radius: 12px; padding: 15px; margin-bottom: 15px; max-width: 90%; float: left; clear: both; width: 100%; }
-        .monologue-box { background-color: #0d1117; border-left: 3px solid #6366f1; padding: 8px 12px; margin-top: 8px; font-size: 0.85rem; color: #a5b4fc; border-radius: 4px; }
+        
+        .chat-box { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        
+        .message-user { background-color: #1e293b; color: #f8fafc; border-radius: 12px; padding: 12px 16px; align-self: flex-end; max-width: 80%; word-break: break-word; }
+        .message-niki { background-color: #1e1b4b; color: #e0e7ff; border: 1px solid #312e81; border-radius: 12px; padding: 15px; align-self: flex-start; max-width: 90%; width: 100%; word-break: break-word; }
+        
+        .monologue-box { background-color: #0d1117; border-left: 3px solid #6366f1; padding: 10px 14px; margin-top: 10px; font-size: 0.85rem; color: #a5b4fc; border-radius: 4px; line-height: 1.4; }
+        
         .ws-btn { text-align: left; background: transparent; color: #94a3b8; border: none; padding: 10px 15px; border-radius: 6px; width: 100%; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
         .ws-btn:hover { background-color: #1e293b; color: #f8fafc; }
         .ws-btn.active { background-color: #2563eb; color: #ffffff; font-weight: bold; }
-        .card-custom { background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #f8fafc; margin-bottom: 15px; }
+        
+        .card-custom { background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #f8fafc; margin-bottom: 12px; }
         .del-btn { color: #ef4444; cursor: pointer; padding: 2px 6px; border-radius: 4px; display: none; }
         .ws-btn:hover .del-btn { display: inline-block; }
         .del-btn:hover { background-color: #451a1a; }
+        
+        /* По-голямо и удобно поле за писане */
+        #user-input {
+            min-height: 90px;
+            max-height: 200px;
+            resize: vertical;
+            font-size: 0.95rem;
+        }
     </style>
 </head>
 <body>
@@ -61,8 +74,8 @@
 
             <div class="p-3 border-top border-secondary bg-dark bg-opacity-25">
                 <div class="input-group">
-                    <textarea id="user-input" class="form-control bg-dark text-light border-secondary" rows="2" placeholder="Въведете инструкция към N.I.K.I... (Enter за изпращане, Shift+Enter за нов ред)"></textarea>
-                    <button class="btn btn-primary px-4" onclick="sendMessage()">
+                    <textarea id="user-input" class="form-control bg-dark text-light border-secondary p-3" placeholder="Въведете инструкция към N.I.K.I... (Enter за изпращане, Shift+Enter за нов ред)"></textarea>
+                    <button class="btn btn-primary px-4 d-flex align-items-center justify-content-center" onclick="sendMessage()" id="send-btn">
                         <i class="fa-solid fa-paper-plane me-1"></i> Изпрати
                     </button>
                 </div>
@@ -112,29 +125,33 @@
         document.getElementById("chat-box").innerHTML = "";
 
         loadWorkspaces();
-        loadWorkspaceData();
+        loadWorkspaceData(true); // Сменяме проекта и презареждаме чата
     }
 
-    function loadWorkspaceData() {
+    function loadWorkspaceData(reloadChat = false) {
         fetch(`/workspace_data/${currentWorkspace}`)
             .then(res => res.json())
             .then(data => {
-                const chatBox = document.getElementById("chat-box");
-                chatBox.innerHTML = "";
-                if (data.chat_history && data.chat_history.length > 0) {
-                    data.chat_history.forEach(msg => {
-                        appendMessageToBox(msg.sender, msg.message, msg.monologue);
-                    });
-                } else {
-                    chatBox.innerHTML = `<div class="text-center text-muted my-5"><i class="fa-regular fa-comments fa-2x mb-2"></i><br>Няма история на чата в този проект. Започнете разговор!</div>`;
+                // Презареждаме чата само ако изрично превключваме проект
+                if (reloadChat) {
+                    const chatBox = document.getElementById("chat-box");
+                    chatBox.innerHTML = "";
+                    if (data.chat_history && data.chat_history.length > 0) {
+                        data.chat_history.forEach(msg => {
+                            appendMessageToBox(msg.sender, msg.message, msg.monologue);
+                        });
+                    } else {
+                        chatBox.innerHTML = `<div class="text-center text-muted my-5"><i class="fa-regular fa-comments fa-2x mb-2"></i><br>Няма история на чата в този проект. Започнете разговор!</div>`;
+                    }
                 }
 
+                // Зареждане на фактите вдясно
                 const factsBox = document.getElementById("facts-container");
                 factsBox.innerHTML = "";
                 if (data.facts && data.facts.length > 0) {
                     data.facts.forEach(f => {
                         factsBox.innerHTML += `
-                            <div class="card card-custom p-2 mb-2">
+                            <div class="card card-custom p-2">
                                 <div class="d-flex justify-content-between mb-1">
                                     <span class="badge bg-success">100% Доверие</span>
                                     <span class="badge bg-secondary">${f.category || 'ФАКТ'}</span>
@@ -147,6 +164,7 @@
                     factsBox.innerHTML = `<div class="small text-muted">Няма записани факти.</div>`;
                 }
 
+                // Зареждане на файловете вдясно
                 const filesBox = document.getElementById("files-container");
                 filesBox.innerHTML = "";
                 if (data.files && data.files.length > 0) {
@@ -166,6 +184,12 @@
 
     function appendMessageToBox(sender, text, monologue) {
         const chatBox = document.getElementById("chat-box");
+        
+        // Премахване на началното "Няма история" съобщение
+        if (chatBox.innerText.includes("Няма история на чата")) {
+            chatBox.innerHTML = "";
+        }
+
         const msgDiv = document.createElement("div");
         if (sender === "user") {
             msgDiv.className = "message-user";
@@ -177,7 +201,7 @@
             if (monologue) {
                 monologueHtml = `
                     <details class="mt-2">
-                        <summary style="cursor:pointer; font-size: 0.8rem;" class="text-info"><i class="fa-solid fa-brain me-1"></i> Виж вътрешен монолог / мисли</summary>
+                        <summary style="cursor:pointer; font-size: 0.82rem;" class="text-info fw-bold"><i class="fa-solid fa-brain me-1"></i> Виж вътрешен монолог / мисли</summary>
                         <div class="monologue-box">${monologue.replace(/\n/g, '<br>')}</div>
                     </details>
                 `;
@@ -190,16 +214,16 @@
 
     function sendMessage() {
         const input = document.getElementById("user-input");
+        const btn = document.getElementById("send-btn");
         const msg = input.value.trim();
         if (!msg) return;
 
-        const chatBox = document.getElementById("chat-box");
-        if (chatBox.innerText.includes("Няма история на чата")) {
-            chatBox.innerHTML = "";
-        }
-
         appendMessageToBox("user", msg);
         input.value = "";
+        input.style.height = "90px"; // Рестартираме височината на текстовото поле
+        
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin me-1"></i> Мисли...`;
 
         fetch("/chat", {
             method: "POST",
@@ -208,12 +232,20 @@
         })
         .then(res => res.json())
         .then(data => {
+            btn.disabled = false;
+            btn.innerHTML = `<i class="fa-solid fa-paper-plane me-1"></i> Изпрати`;
+
             if (data.target_workspace && data.target_workspace !== currentWorkspace) {
                 switchWorkspace(data.target_workspace);
             } else {
                 appendMessageToBox("niki", data.reply, data.monologue);
-                loadWorkspaceData();
+                loadWorkspaceData(false); // Обновяваме само фактите вдясно, БЕЗ да пипаме чата!
             }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = `<i class="fa-solid fa-paper-plane me-1"></i> Изпрати`;
+            appendMessageToBox("niki", "⚠️ Възникна грешка при връзката със сървъра.", null);
         });
     }
 
@@ -233,7 +265,7 @@
         .then(data => {
             alert(data.message);
             input.value = "";
-            loadWorkspaceData();
+            loadWorkspaceData(false);
         });
     }
 
@@ -246,7 +278,7 @@
             })
             .then(res => res.json())
             .then(data => {
-                loadWorkspaceData();
+                loadWorkspaceData(false);
             });
         }
     }
