@@ -7,11 +7,9 @@ from groq import Groq
 
 app = Flask(__name__)
 
-# Инициализация на директориите
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACES_DIR = os.path.join(BASE_DIR, "NIKI_CORE", "workspaces")
 
-# Инициализация на Groq клиент
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 groq_client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
 
@@ -21,8 +19,43 @@ def sanitize_ws_name(name):
         return "general"
     return name.strip().lower().replace(" ", "_")
 
+def clean_ai_response(text):
+    """Автоматично коригира типични граматични грешки и смесени латински букви."""
+    if not text:
+        return text
+    
+    # 1. Замяна на визуално сходни латински букви с български (homoglyphs)
+    lat_to_cyr = {
+        'a': 'а', 'e': 'е', 'o': 'о', 'p': 'р', 'c': 'с', 'x': 'х',
+        'A': 'А', 'E': 'Е', 'O': 'О', 'P': 'Р', 'C': 'С', 'X': 'Х'
+    }
+    
+    words = text.split()
+    cleaned_words = []
+    for word in words:
+        # Ако думата съдържа преобладаващо кирилица, заменяме единичните латински букви вътре
+        cyr_count = len(re.findall(r'[\u0400-\u04FF]', word))
+        if cyr_count > 0:
+            for lat, cyr in lat_to_cyr.items():
+                word = word.replace(lat, cyr)
+        cleaned_words.append(word)
+    
+    result = " ".join(cleaned_words)
+
+    # 2. Поправка на развалени фрази от буквален превод
+    fixes = {
+        r"\bСъм съгласен\b": "Съгласен съм",
+        r"\bсъм съгласен\b": "съм съгласен",
+        r"\bАз съм съгласен\b": "Съгласен съм",
+        r"\bСъм готов\b": "Готов съм",
+        r"\bсъм готов\b": "съм готов"
+    }
+    for pattern, replacement in fixes.items():
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+
+    return result
+
 def safe_read_json(file_path):
-    """Безопасно четене на JSON файл."""
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -34,7 +67,6 @@ def safe_read_json(file_path):
     return []
 
 def safe_write_json(file_path, data):
-    """Безопасно записване на JSON файл."""
     try:
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as f:
@@ -45,7 +77,6 @@ def safe_write_json(file_path, data):
         return False
 
 def call_ai_engine(prompt, context_facts=[]):
-    """Обръщение към Groq AI (Llama 3) за интелигентен отговор и разсъждение."""
     if not groq_client:
         return {
             "reply": f"Обработена инструкция: {prompt}",
@@ -55,15 +86,16 @@ def call_ai_engine(prompt, context_facts=[]):
 
     try:
         system_instructions = f"""
-        Ти си N.I.K.I. - изкуствен интелект и персонален асистент.
-        Отговаряй винаги на български език, ясно, топло и с високо ниво на интелигентност.
+        Ти си N.I.K.I. - усъвършенстван персонален асистент и ядро на системата.
+        Твоята цел е да помагаш при изграждането на сюжетни линии, архитектура на MMORPG игри, световни загадки и иновации.
         
-        Налични факти/дневник за този проект до момента:
+        ЗАКОВАНА ПАМЕТ И ФАКТИ ЗА ТОЗИ ПРОЕКТ:
         {json.dumps(context_facts, ensure_ascii=False)}
         
-        Важни правила:
-        1. Потребителят разговаря с теб. Отговаряй на въпросите му, като взимаш предвид фактите по-горе.
-        2. Разграничавай команда от информация. Ако потребителят ти дава дневни бележки или факти, анализирай ги задълбочено.
+        ПРАВИЛА:
+        1. Отговаряй ВИНАГИ на чист, граматически правилен български език.
+        2. НИКОГА не противоречи на фактите, записани по-горе. Спазвай стриктно логиката на 'Ефекта на пеперудата'.
+        3. Бъди креативен, точен и давай практични идеи за разработка.
         """
 
         response = groq_client.chat.completions.create(
@@ -73,14 +105,15 @@ def call_ai_engine(prompt, context_facts=[]):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.6,
-            max_tokens=1000
+            max_tokens=1500
         )
 
-        reply_text = response.choices[0].message.content
+        raw_reply = response.choices[0].message.content
+        cleaned_reply = clean_ai_response(raw_reply)
 
         return {
-            "reply": reply_text,
-            "thought": f"AI Engine: Groq (Llama 3.3 70B)\n- Сканиран контекст: {len(context_facts)} факта\n- Статус: Успешна генерация.",
+            "reply": cleaned_reply,
+            "thought": f"AI Engine: Groq (Llama 3.3 70B)\n- Валидиран контекст: {len(context_facts)} факта\n- Автоматично чистене на езика: Активно.",
             "extracted_fact": None
         }
     except Exception as e:
@@ -165,7 +198,6 @@ def chat():
     existing_facts = safe_read_json(facts_path)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Изчистване на факти
     if "изтрий всичко" in message.lower():
         safe_write_json(facts_path, [])
         return jsonify({
@@ -174,11 +206,9 @@ def chat():
             "target_workspace": active_ws
         })
 
-    # Автоматично засичане на команда за запис
     is_save_command = any(kw in message.lower() for kw in ["запиши", "добави факт", "дневник:"])
 
     if is_save_command:
-        # Изчистване на самата дума "запиши" и оставяне само на същината
         clean_text = re.sub(r"^(запиши предното съобщение|запиши|добави факт|дневник:)\s*:?", "", message, flags=re.IGNORECASE).strip()
         if not clean_text:
             clean_text = message
@@ -193,7 +223,7 @@ def chat():
         safe_write_json(facts_path, existing_facts)
 
         reply = f"✅ Успешно записах следното в **{active_ws.upper()}**:\n\n> \"{clean_text}\""
-        monologue = f"Автоматичен запис във база данни:\n- Филтрирана същина: '{clean_text}'\n- Проект: {active_ws.upper()}"
+        monologue = f"Запис във база данни:\n- Съдържание: '{clean_text}'\n- Проект: {active_ws.upper()}"
 
         return jsonify({
             "reply": reply,
@@ -201,7 +231,6 @@ def chat():
             "target_workspace": active_ws
         })
 
-    # Използване на Groq AI за генериране на интелигентен отговор
     ai_result = call_ai_engine(message, existing_facts)
 
     return jsonify({
