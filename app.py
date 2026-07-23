@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import shutil
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 from groq import Groq
@@ -53,7 +54,6 @@ def clean_ai_response(text):
     return result
 
 def extract_text_from_file(file_path):
-    """Извлича чист текст от PDF, DOCX или TXT файлове."""
     ext = os.path.splitext(file_path)[1].lower()
     extracted_text = ""
     try:
@@ -109,12 +109,12 @@ def call_ai_engine(prompt, context_facts=[], library_context=""):
         ПРОВЕРЕНИ ФАКТИ В ПРОЕКТА:
         {json.dumps(context_facts, ensure_ascii=False)}
 
-        ТЕКСТ ОТ ДОКУМЕНТИ В БИБЛИОТЕКАТА:
-        {library_context[:4000] if library_context else 'Няма качен документ.'}
+        ТЕКСТ ОТ ВСИЧКИ КАЧЕНИ ДОКУМЕНТИ В БИБЛИОТЕКАТА:
+        {library_context[:6000] if library_context else 'Няма качени документи.'}
 
         ПРАВИЛА ЗА АНАЛИЗ:
         1. Проверявай за логически конфликти (напр. суша -> срив в популацията, а не растеж).
-        2. Ако потребителят пита за качените файлове, цитирай информацията от тях.
+        2. Анализирай съвместно съдържанието от всички файлове в библиотеката.
         3. Отговаряй ВИНАГИ на правилен български език.
         """
 
@@ -133,7 +133,7 @@ def call_ai_engine(prompt, context_facts=[], library_context=""):
 
         return {
             "reply": cleaned_reply,
-            "thought": f"AI Engine: Groq (Llama 3.3 70B)\n- Сканирани факти: {len(context_facts)}\n- Четене от библиотека: {'Да' if library_context else 'Не'}",
+            "thought": f"AI Engine: Groq (Llama 3.3 70B)\n- Сканирани факти: {len(context_facts)}\n- Прочетени файлове: {'Да' if library_context else 'Не'}",
             "extracted_fact": None
         }
     except Exception as e:
@@ -219,7 +219,42 @@ def chat():
     existing_facts = safe_read_json(facts_path)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Четене на съдържанието от библиотеката
+    # КОМАНДА: ИЗТРИВАНЕ НА ПРОЕКТ
+    match_del = re.match(r"^изтрий проект\s+(.+)$", message, re.IGNORECASE)
+    if match_del:
+        target_ws = sanitize_ws_name(match_del.group(1))
+        if target_ws == "general":
+            return jsonify({"reply": "⚠️ Основният проект **GENERAL** не може да бъде изтрит.", "monologue": "Отказано изтриване на основен проект."})
+        
+        target_path = os.path.join(WORKSPACES_DIR, target_ws)
+        if os.path.exists(target_path):
+            shutil.rmtree(target_path)
+            return jsonify({"reply": f"🗑️ Проектът **{target_ws.upper()}** беше изтрит завинаги.", "monologue": f"Изтриване на директория: {target_ws}", "target_workspace": "general"})
+        else:
+            return jsonify({"reply": f"❌ Проект с име **{target_ws}** не бе намерен.", "monologue": "Проектът не съществува."})
+
+    # КОМАНДА: ПРЕИМЕНУВАНЕ НА ПРОЕКТ
+    match_ren = re.match(r"^преименувай проект\s+(.+)\s+на\s+(.+)$", message, re.IGNORECASE)
+    if match_ren:
+        old_ws = sanitize_ws_name(match_ren.group(1))
+        new_ws = sanitize_ws_name(match_ren.group(2))
+
+        if old_ws == "general":
+            return jsonify({"reply": "⚠️ Основният проект **GENERAL** не може да бъде преименуван.", "monologue": "Отказана операция."})
+
+        old_path = os.path.join(WORKSPACES_DIR, old_ws)
+        new_path = os.path.join(WORKSPACES_DIR, new_ws)
+
+        if not os.path.exists(old_path):
+            return jsonify({"reply": f"❌ Проектът **{old_ws}** не съществува.", "monologue": "Грешка при преименуване."})
+
+        if os.path.exists(new_path):
+            return jsonify({"reply": f"⚠️ Вече съществува проект с име **{new_ws}**.", "monologue": "Дублирано име."})
+
+        os.rename(old_path, new_path)
+        return jsonify({"reply": f"✏️ Проектът **{old_ws.upper()}** беше преименуван на **{new_ws.upper()}**.", "monologue": "Успешно преименуване.", "target_workspace": new_ws})
+
+    # Четене на съдържанието от всички файлове в библиотеката
     library_path = os.path.join(ws_path, "library")
     library_text = ""
     if os.path.exists(library_path):
@@ -283,6 +318,7 @@ def upload_file():
     library_path = os.path.join(WORKSPACES_DIR, ws_name, "library")
     os.makedirs(library_path, exist_ok=True)
 
+    # Безопасно запазване с оригиналното име на файла
     save_path = os.path.join(library_path, file.filename)
     file.save(save_path)
 
