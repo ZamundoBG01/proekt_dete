@@ -11,7 +11,7 @@
         .app-container { display: flex; height: 100vh; }
         
         .sidebar-left { width: 260px; background-color: #1c2541; padding: 20px; border-right: 1px solid #3a506b; display: flex; flex-direction: column; }
-        .sidebar-right { width: 320px; background-color: #1c2541; padding: 20px; border-left: 1px solid #3a506b; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
+        .sidebar-right { width: 340px; background-color: #1c2541; padding: 15px; border-left: 1px solid #3a506b; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
         .chat-main { flex: 1; display: flex; flex-direction: column; background-color: #0b132b; }
         
         .brand-header { font-weight: bold; font-size: 1.2rem; color: #4cc9f0; display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
@@ -22,7 +22,7 @@
         .chat-header { padding: 15px 20px; background: #1c2541; border-bottom: 1px solid #3a506b; display: flex; justify-content: space-between; align-items: center; }
         .chat-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
         
-        .msg-bubble { max-width: 80%; padding: 12px 16px; border-radius: 12px; font-size: 0.95rem; line-height: 1.5; }
+        .msg-bubble { max-width: 80%; padding: 12px 16px; border-radius: 12px; font-size: 0.95rem; line-height: 1.5; white-space: pre-wrap; }
         .user-msg { background: #4361ee; color: white; align-self: flex-end; border-bottom-right-radius: 2px; }
         .bot-msg { background: #1c2541; color: #e0e1dd; align-self: flex-start; border-bottom-left-radius: 2px; border: 1px solid #3a506b; }
         
@@ -34,9 +34,17 @@
         .panel-title { font-size: 0.85rem; font-weight: bold; color: #4cc9f0; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
         .panel-list { font-size: 0.8rem; color: #c7d2fe; margin: 0; padding-left: 0; list-style: none; }
 
-        .chat-input-area { padding: 15px; background: #1c2541; border-top: 1px solid #3a506b; display: flex; gap: 10px; }
-        .chat-input { background: #0b132b; border: 1px solid #3a506b; color: white; border-radius: 8px; padding: 10px; flex: 1; }
+        /* Многоредов чат вход */
+        .chat-input-area { padding: 15px; background: #1c2541; border-top: 1px solid #3a506b; display: flex; gap: 10px; align-items: flex-end; }
+        .chat-input { background: #0b132b; border: 1px solid #3a506b; color: white; border-radius: 8px; padding: 10px; flex: 1; resize: none; min-height: 44px; max-height: 150px; font-family: inherit; font-size: 0.95rem; line-height: 1.4; }
         .chat-input:focus { background: #0b132b; color: white; outline: none; border-color: #4361ee; }
+
+        /* Значки за доверие */
+        .trust-badge { font-size: 0.7rem; font-weight: bold; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-bottom: 4px; }
+        .trust-high { background-color: #10b981; color: #ffffff; }
+        .trust-mid { background-color: #f59e0b; color: #000000; }
+        .trust-low { background-color: #ef4444; color: #ffffff; }
+        .fact-item { background: #1c2541; border: 1px solid #3a506b; border-radius: 6px; padding: 8px; margin-bottom: 6px; }
     </style>
 </head>
 <body>
@@ -65,15 +73,16 @@
         <div class="chat-box" id="chatBox"></div>
 
         <div class="chat-input-area">
-            <input type="text" id="userInput" class="chat-input" placeholder="Въведете инструкция към N.I.K.I..." onkeypress="handleKeyPress(event)">
+            <!-- Текстово поле с многоредов вход и spellcheck -->
+            <textarea id="userInput" class="chat-input" spellcheck="true" lang="bg" placeholder="Въведете инструкция към N.I.K.I... (Enter за изпращане, Shift+Enter за нов ред)" oninput="autoResize(this)" onkeydown="handleKeyDown(event)"></textarea>
             <button class="btn btn-primary" onclick="sendMessage()"><i class="fa-solid fa-paper-plane"></i> Изпрати</button>
         </div>
     </div>
 
     <div class="sidebar-right">
         <div class="panel-card">
-            <div class="panel-title"><i class="fa-solid fa-sun"></i> ЗАПИСАНИ ФАКТИ (+100)</div>
-            <ul class="panel-list" id="factsList"><li>Няма регистрирани факти.</li></ul>
+            <div class="panel-title"><i class="fa-solid fa-shield-halved"></i> ПЛАСТОВЕ НА ДОВЕРИЕ (ФАКТИ)</div>
+            <div id="factsList"><span class="text-muted small">Няма регистрирани факти.</span></div>
         </div>
 
         <div class="panel-card">
@@ -90,6 +99,18 @@
 
 <script>
     let activeWorkspace = "general";
+
+    function autoResize(textarea) {
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+    }
+
+    function handleKeyDown(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    }
 
     async function loadWorkspaces() {
         const res = await fetch("/workspaces");
@@ -116,15 +137,37 @@
         const res = await fetch(`/workspace_data/${activeWorkspace}`);
         const data = await res.json();
 
+        // Рендериране на факти с нива на доверие
         const factsList = document.getElementById("factsList");
-        factsList.innerHTML = data.facts.length ? data.facts.map(f => `<li class="mb-1">• ${f.content}</li>`).join('') : '<li>Няма регистрирани факти.</li>';
+        if (data.facts && data.facts.length > 0) {
+            factsList.innerHTML = data.facts.map(f => {
+                let conf = f.confidence || 90;
+                let badgeClass = conf >= 80 ? 'trust-high' : (conf >= 50 ? 'trust-mid' : 'trust-low');
+                let cat = f.category || 'GENERAL';
+                let content = f.fact || f.content || f;
 
+                return `
+                    <div class="fact-item">
+                        <div>
+                            <span class="trust-badge ${badgeClass}">${conf}% Доверие</span>
+                            <span class="float-end text-info style="font-size:0.7rem;">🏷️ ${cat}</span>
+                        </div>
+                        <div class="text-light mt-1">${content}</div>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            factsList.innerHTML = '<span class="text-muted small">Няма регистрирани факти.</span>';
+        }
+
+        // Рендериране на задачи
         const tasksList = document.getElementById("tasksList");
-        const pending = data.tasks.filter(t => t.status === "PENDING");
-        tasksList.innerHTML = pending.length ? pending.map(t => `<li class="mb-1">• ${t.task}</li>`).join('') : '<li>Няма активни задачи.</li>';
+        const pending = data.tasks ? data.tasks.filter(t => typeof t === 'string' || t.status === "PENDING") : [];
+        tasksList.innerHTML = pending.length ? pending.map(t => `<li class="mb-1">• ${typeof t === 'string' ? t : t.task}</li>`).join('') : '<li>Няма активни задачи.</li>';
 
+        // Рендериране на файлове
         const filesList = document.getElementById("filesList");
-        filesList.innerHTML = data.files.length ? data.files.map(f => 
+        filesList.innerHTML = (data.files && data.files.length) ? data.files.map(f => 
             `<li class="d-flex justify-content-between align-items-center mb-1">
                 <span class="text-truncate" style="max-width: 210px;" title="${f}">📄 ${f}</span>
                 <i class="fa-solid fa-trash text-danger ms-2" style="cursor:pointer;" title="Изтрий файл" onclick="deleteFile('${f}')"></i>
@@ -152,6 +195,7 @@
 
         appendMessage("user", msg);
         input.value = "";
+        input.style.height = 'auto';
 
         const res = await fetch("/chat", {
             method: "POST",
@@ -164,7 +208,7 @@
             switchWorkspace(data.target_workspace);
         }
 
-        appendMessage("bot", data.reply, data.monologue);
+        appendMessage("bot", data.reply || data.response, data.monologue);
         loadWorkspaceData();
     }
 
@@ -207,7 +251,6 @@
         loadWorkspaceData();
     };
 
-    function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
     async function createNewWorkspace() {
         const name = prompt("Име на нов проект:");
         if (name) {
@@ -216,7 +259,7 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name })
             });
-            switchWorkspace(name);
+            switchWorkspace(name.toLowerCase());
         }
     }
 
