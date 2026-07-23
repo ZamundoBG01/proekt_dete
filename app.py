@@ -2,11 +2,14 @@ import os
 import json
 import re
 import shutil
+import threading
+import time
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
 from groq import Groq
 import pypdf
 import docx
+from docx import Document
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -89,7 +92,6 @@ def sanitize_ws_name(name):
 def clean_ai_response(text):
     if not text:
         return text
-    
     fixes = {
         r"\bСъм съгласен\b": "Съгласен съм",
         r"\bАз съм съгласен\b": "Съгласен съм",
@@ -98,7 +100,6 @@ def clean_ai_response(text):
     result = text
     for pattern, replacement in fixes.items():
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
-
     return result
 
 def extract_text_from_file(file_path):
@@ -123,6 +124,22 @@ def extract_text_from_file(file_path):
     except Exception as e:
         print(f"Грешка при извличане на текст от {file_path}: {e}")
     return extracted_text.strip()
+
+def save_text_as_docx(ws_name, filename, title, content):
+    """ Генерира форматиран Word (.docx) документ и го запазва в библиотеката на проекта """
+    library_path = os.path.join(WORKSPACES_DIR, sanitize_ws_name(ws_name), "library")
+    os.makedirs(library_path, exist_ok=True)
+    
+    file_path = os.path.join(library_path, filename)
+    doc = Document()
+    doc.add_heading(title, level=1)
+    
+    for paragraph in content.split('\n\n'):
+        if paragraph.strip():
+            doc.add_paragraph(paragraph.strip())
+            
+    doc.save(file_path)
+    return file_path
 
 def get_workspace_facts(ws_name):
     conn = get_db_connection()
@@ -213,7 +230,7 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
         files_str = ", ".join(file_list) if file_list else "Няма качени файлове"
 
         system_instructions = f"""
-        Ти си N.I.K.I. - архитект на логиката и симулациите ("Ефекта на пеперудата") за писатели и гейм-разработчици.
+        Ти си N.I.K.I. - главен архитект на светове, физични и биологични симулации ("Ефекта на пеперудата") за писатели, сценаристи и гейм-разработчици.
 
         СПИСЪК НА ФАЙЛОВЕ В БИБЛИОТЕКАТА:
         [{files_str}]
@@ -221,24 +238,16 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
         ПРОВЕРЕНИ ФАКТИ И ПРАВИЛА В ТОЗИ ПРОЕКТ/СВЯТ:
         {json.dumps(context_facts, ensure_ascii=False)}
 
-        СЪДЪРЖАНИЕ НА КАЧЕНИТЕ ФАЙЛОВЕ:
+        СЪДЪРЖАНИЕ НА БИБЛИОТЕКАТА:
         {library_context[:6000] if library_context else 'Няма допълнителен текст.'}
 
-        ПРАВИЛА ЗА РАБОТА С "ЕФЕКТА НА ПЕПЕРУДАТА":
-        1. Използвай ЗАДЪЛЖИТЕЛНО всички налични факти за проекта.
-        2. Ако има директен конфликт с фактите, ЗАДЪЛЖИТЕЛНО започни с:
-           "⚠️ **ЛОГИЧЕСКА АЛАРМА (Ефект на пеперудата):**" и обясни защо.
-
-        3. Когато провеждаш АНАЛИЗ или СИМУЛАЦИЯ на промяна:
+        ПРАВИЛА ЗА РАБОТА:
+        1. За светове, планети и същества: Базирай анатомията, климата и еволюцията на РЕАЛНИ ФИЗИЧНИ И БИОЛОГИЧНИ ЗАКОНИ (гравитация, атмосфера, радиация), освен ако потребителят не дефинира магически правила.
+        2. Избягвай клишета! Генерирай уникални имена, езици, традиции и архитектура.
+        3. Когато провеждаш АНАЛИЗ или СИМУЛАЦИЯ на промяна ("Ефекта на пеперудата"):
            - **Секция 1: 🔒 ТВЪРДА ДЕТЕРМИНИРАНА ВЕРИГА (Неизбежни преки последици)**
-             Проследи стъпка по стъпка физическите, икономическите и пряко дефинирани логически последици от А до Я.
-             
            - **Секция 2: 🎲 СИМУЛАЦИЯ НА 10 ВАРИАНТА (Спонтанни вторични променливи)**
-             Изброи до 10 развиващи се разклонения. 
-             ВАЖНО: За ВСЕКИ вариант генерарирай СПОНТАННА ВТОРИЧНА ПРОМЕНЛИВА (нов герой, ненадеен ресурс, революция, нов конфликт, природно събитие).
-             Посочи процентна вероятност (напр. *Вариант 3/10 - 70% вероятност*).
-
-        4. Отговаряй ВИНАГИ на чист и правилен български език, без да заменяш букви.
+        4. Отговаряй ВИНАГИ на чист и правилен български език.
         """
 
         response = groq_client.chat.completions.create(
@@ -247,7 +256,7 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.5,
+            temperature=0.6,
             max_tokens=2500
         )
 
@@ -263,6 +272,25 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
             "reply": f"Грешка при комуникация с AI модела: {str(e)}",
             "thought": f"Грешка: {str(e)}"
         }
+
+def auto_run_worker(ws_name, initial_prompt, cycles=3):
+    """ Бекграунд функция за 24/7 самостоятелно генериране и разклоняване """
+    print(f"🚀 Стартиран Auto-Run за проект '{ws_name}' с {cycles} цикъла.")
+    current_prompt = initial_prompt
+    
+    for i in range(1, cycles + 1):
+        facts = get_workspace_facts(ws_name)
+        ai_res = call_ai_engine(f"[АВТОМАТИЧЕН ЦИКЪЛ {i}/{cycles}] {current_prompt}", facts)
+        
+        reply_msg = f"🔄 **[Auto-Run Цикъл {i}/{cycles}]**\n\n" + ai_res["reply"]
+        save_chat_message(ws_name, "niki", reply_msg, ai_res["thought"])
+        
+        # Автоматично запазваме резултата от цикъла като Word документ
+        doc_filename = f"autorun_cycle_{i}_{int(time.time())}.docx"
+        save_text_as_docx(ws_name, doc_filename, f"Auto-Run Симулация - Цикъл {i}", ai_res["reply"])
+        
+        current_prompt = f"Въз основа на предишната симулация, задълбочи анализa на най-вероятните 2 варианта и генерирай следващите 5 години развитие."
+        time.sleep(5) # Пауза между извикванията
 
 @app.route("/")
 def index():
@@ -334,11 +362,21 @@ def chat():
     data = request.get_json() or {}
     message = data.get("message", "").strip()
     active_ws = sanitize_ws_name(data.get("workspace", "general"))
+    auto_run = data.get("auto_run", False)
 
     if not message:
         return jsonify({"reply": "Моля, въведете инструкция.", "monologue": None})
 
     save_chat_message(active_ws, "user", message)
+
+    if auto_run:
+        # Стартираме офлайн бекграунд нишка (Auto-Run)
+        t = threading.Thread(target=auto_run_worker, args=(active_ws, message, 3))
+        t.start()
+        reply_msg = "🚀 **Автоматичният офлайн цикъл (Auto-Run) беше стартиран!** N.I.K.I. ще продължи да работи на заден план и да създава Word документи в библиотеката, дори ако излезете."
+        save_chat_message(active_ws, "niki", reply_msg, "Стартирана офлайн задача.")
+        return jsonify({"reply": reply_msg, "monologue": "Auto-Run Engine Active"})
+
     existing_facts = get_workspace_facts(active_ws)
 
     library_path = os.path.join(WORKSPACES_DIR, active_ws, "library")
@@ -399,6 +437,11 @@ def chat():
 
     ai_result = call_ai_engine(message, existing_facts, file_list, library_text)
 
+    # Автоматично създаваме Word документ, ако отговорът съдържа детайлна симулация
+    if "СЕКЦИЯ" in ai_result["reply"].upper() or len(ai_result["reply"]) > 1000:
+        doc_name = f"simulation_{int(time.time())}.docx"
+        save_text_as_docx(active_ws, doc_name, "N.I.K.I. Симулационен Доклад", ai_result["reply"])
+
     save_chat_message(active_ws, "niki", ai_result["reply"], ai_result["thought"])
 
     return jsonify({
@@ -425,6 +468,12 @@ def upload_file():
     file.save(save_path)
 
     return jsonify({"message": f"Файлът '{file.filename}' беше качен успешно в {ws_name.upper()}."})
+
+@app.route("/download/<path:ws_name>/<path:filename>")
+def download_file(ws_name, filename):
+    """ Маршрут за директно сваляне на Word (.docx) или друг файл от библиотеката """
+    library_path = os.path.join(WORKSPACES_DIR, sanitize_ws_name(ws_name), "library")
+    return send_from_directory(library_path, filename, as_attachment=True)
 
 @app.route("/delete_file", methods=["POST"])
 def delete_file():
