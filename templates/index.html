@@ -12,7 +12,6 @@
             --accent-color: #38bdf8;
             --accent-hover: #0284c7;
             --text-main: #f8fafc;
-            --text-muted: #94a3b8;
             --border-color: rgba(255, 255, 255, 0.1);
         }
 
@@ -69,7 +68,8 @@
             max-width: 85%;
             padding: 12px 18px;
             border-radius: 10px;
-            line-height: 1.5;
+            line-height: 1.6;
+            font-size: 15px;
         }
 
         .message.user {
@@ -90,27 +90,28 @@
             color: var(--accent-color);
             cursor: pointer;
             padding: 5px 0;
-            font-size: 0.85em;
+            font-size: 0.9em;
             text-decoration: underline;
             display: block;
-            margin-top: 8px;
+            margin-top: 10px;
         }
 
         .monologue-content {
             display: none;
-            background: rgba(15, 23, 42, 0.6);
-            padding: 10px;
+            background: rgba(15, 23, 42, 0.7);
+            padding: 12px;
             border-radius: 6px;
-            font-size: 0.85em;
+            font-size: 0.88em;
             color: #cbd5e1;
-            margin-top: 5px;
+            margin-top: 6px;
             white-space: pre-wrap;
+            border-left: 3px solid var(--accent-color);
         }
 
         .input-area {
             padding: 15px;
             border-top: 1px solid var(--border-color);
-            background: rgba(15, 23, 42, 0.8);
+            background: rgba(15, 23, 42, 0.85);
             display: flex;
             flex-direction: column;
             gap: 10px;
@@ -124,14 +125,21 @@
 
         textarea {
             width: 100%;
-            height: 80px;
+            height: 90px;
             background: rgba(30, 41, 59, 0.9);
             border: 1px solid var(--border-color);
             border-radius: 8px;
             color: #fff;
-            padding: 10px;
-            resize: none;
+            padding: 12px;
+            resize: vertical;
             box-sizing: border-box;
+            font-size: 16px;
+            font-family: inherit;
+            line-height: 1.4;
+        }
+
+        textarea:focus {
+            outline: 1px solid var(--accent-color);
         }
 
         button {
@@ -181,10 +189,10 @@
             justify-content: space-between;
             align-items: center;
             background: rgba(15, 23, 42, 0.5);
-            padding: 6px 10px;
+            padding: 8px 10px;
             border-radius: 6px;
-            margin-bottom: 5px;
-            font-size: 0.85em;
+            margin-bottom: 6px;
+            font-size: 0.88em;
         }
 
         .download-link {
@@ -197,7 +205,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            font-size: 0.85em;
+            font-size: 0.9em;
             color: var(--accent-color);
         }
     </style>
@@ -213,12 +221,12 @@
         <div class="chat-messages" id="chat-messages">
         </div>
         <div class="input-area">
-            <textarea id="user-input" placeholder="Опиши идея за свят, физика на планета или задай казус за симулация..."></textarea>
+            <textarea id="user-input" spellcheck="true" placeholder="Опиши идея за свят, физика на планета или задай казус за симулация... (Enter за изпращане, Shift+Enter за нов ред)"></textarea>
             <div class="input-controls">
                 <label class="autorun-toggle">
                     <input type="checkbox" id="autorun-check"> 🔄 Автоматичен режим (Auto-Run 24/7)
                 </label>
-                <button onclick="sendMessage()" style="margin-left: auto;">Изпрати</button>
+                <button onclick="sendMessage()" style="margin-left: auto;">Изпрати (Enter)</button>
             </div>
         </div>
     </div>
@@ -228,26 +236,33 @@
             <h3>📂 Избор на Проект</h3>
             <select id="workspace-select" class="workspace-select" onchange="switchWorkspace()">
             </select>
-            <input type="text" id="new-ws-name" placeholder="Нов проект..." style="width:70%; padding:5px;">
-            <button onclick="createWorkspace()" style="padding:5px 10px;">+</button>
+            <input type="text" id="new-ws-name" placeholder="Нов проект..." style="width:68%; padding:6px; font-size:14px;">
+            <button onclick="createWorkspace()" style="padding:6px 12px;">+</button>
         </div>
 
         <div class="panel-box">
             <h3>📚 Библиотека & Документи (.docx)</h3>
             <input type="file" id="file-upload" style="display:none" onchange="uploadFile()">
-            <button onclick="document.getElementById('file-upload').click()" style="width:100%; margin-bottom:100px; font-size:0.85em;">📤 Качи Файл</button>
+            <button onclick="document.getElementById('file-upload').click()" style="width:100%; margin-bottom:12px; font-size:0.88em;">📤 Качи Файл</button>
             <div id="file-list"></div>
         </div>
 
         <div class="panel-box">
             <h3>🧠 Факти в Базата Данни</h3>
-            <div id="facts-list" style="font-size: 0.85em;"></div>
+            <div id="facts-list" style="font-size: 0.88em;"></div>
         </div>
     </div>
 </div>
 
 <script>
     let currentWorkspace = "general";
+
+    document.getElementById("user-input").addEventListener("keydown", function(e) {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
 
     async function loadWorkspaces() {
         const res = await fetch("/workspaces");
@@ -287,21 +302,21 @@
         const res = await fetch(`/workspace_data/${currentWorkspace}`);
         const data = await res.json();
         
-        // Чат
+        // Показване на чат историята
         const chatBox = document.getElementById("chat-messages");
         chatBox.innerHTML = "";
         data.chat_history.forEach(msg => {
             appendMessage(msg.sender, msg.message, msg.monologue);
         });
 
-        // Файлове
+        // Показване на файловете за сваляне
         const fileList = document.getElementById("file-list");
         fileList.innerHTML = "";
         data.files.forEach(file => {
             fileList.innerHTML += `
                 <div class="file-item">
                     <span>📄 ${file}</span>
-                    <a href="/download/${currentWorkspace}/${file}" class="download-link" download>[Свали]</a>
+                    <a href="/download/${currentWorkspace}/${file}" class="download-link" download>[Свали .docx]</a>
                 </div>
             `;
         });
@@ -345,21 +360,25 @@
         if(!msg) return;
 
         appendMessage("user", msg);
-        input.value = "";
+        input.value = ""; // Изчистваме чак след като сме добавили съобщението в UI
 
-        const res = await fetch("/chat", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({
-                message: msg,
-                workspace: currentWorkspace,
-                auto_run: autoRun
-            })
-        });
+        try {
+            const res = await fetch("/chat", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    message: msg,
+                    workspace: currentWorkspace,
+                    auto_run: autoRun
+                })
+            });
 
-        const data = await res.json();
-        appendMessage("niki", data.reply, data.monologue);
-        loadWorkspaceData();
+            const data = await res.json();
+            appendMessage("niki", data.reply, data.monologue);
+            loadWorkspaceData();
+        } catch (err) {
+            appendMessage("niki", "❌ Грешка при изпращане на съобщението. Опитайте отново.", err.toString());
+        }
     }
 
     async function uploadFile() {
