@@ -8,7 +8,7 @@
     <style>
         :root {
             --bg-color: #0f172a;
-            --panel-bg: rgba(30, 41, 59, 0.75);
+            --panel-bg: rgba(30, 41, 59, 0.8);
             --accent-color: #38bdf8;
             --accent-hover: #0284c7;
             --text-main: #f8fafc;
@@ -141,7 +141,6 @@
             line-height: 1.4;
             white-space: pre-wrap;
             word-break: break-word;
-            overflow-x: hidden;
         }
 
         textarea:focus {
@@ -170,7 +169,7 @@
             display: flex;
             flex-direction: column;
             gap: 12px;
-            min-width: 300px;
+            min-width: 320px;
         }
 
         .panel-box {
@@ -218,6 +217,16 @@
             color: var(--accent-color);
             cursor: pointer;
         }
+
+        .expand-facts-btn {
+            background: none;
+            border: none;
+            color: var(--accent-color);
+            cursor: pointer;
+            padding: 4px 0;
+            font-size: 0.85em;
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -254,14 +263,12 @@
 
         <div class="panel-box">
             <h3 style="margin-top:0; font-size:15px;">📚 Библиотека & Документи (.docx)</h3>
-            <input type="file" id="file-upload" style="display:none" onchange="uploadFile()">
-            <button onclick="document.getElementById('file-upload').click()" style="width:100%; padding:8px; margin-bottom:10px; background:var(--accent-color); border:none; border-radius:6px; font-weight:bold; cursor:pointer;">📤 Качи Файл</button>
             <div id="file-list"></div>
         </div>
 
         <div class="panel-box">
             <h3 style="margin-top:0; font-size:15px;">🧠 Факти в Базата Данни</h3>
-            <div id="facts-list" style="font-size: 0.88em;"></div>
+            <div id="facts-container" style="font-size: 0.88em;"></div>
         </div>
     </div>
 </div>
@@ -317,12 +324,14 @@
             const res = await fetch(`/workspace_data/${currentWorkspace}`);
             const data = await res.json();
             
+            // Чат история
             const chatBox = document.getElementById("chat-messages");
             chatBox.innerHTML = "";
             data.chat_history.forEach(msg => {
                 appendMessage(msg.sender, msg.message, msg.monologue);
             });
 
+            // Файлове
             const fileList = document.getElementById("file-list");
             fileList.innerHTML = "";
             data.files.forEach(file => {
@@ -334,12 +343,36 @@
                 `;
             });
 
-            const factsList = document.getElementById("facts-list");
-            factsList.innerHTML = "";
-            data.facts.forEach(f => {
-                factsList.innerHTML += `<p style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin:4px 0;">• ${f.content}</p>`;
-            });
+            // Компактни Факти (Показваме само последния + [+] бутон за останалите)
+            const factsContainer = document.getElementById("facts-container");
+            factsContainer.innerHTML = "";
+            
+            if (data.facts.length === 0) {
+                factsContainer.innerHTML = "<p style='color:#94a3b8;'>Няма записани факти.</p>";
+            } else {
+                const latest = data.facts[0];
+                let html = `<p style="margin:0 0 6px 0; font-weight:bold; color:#e2e8f0;">📌 Последен факт:</p>`;
+                html += `<p style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin:0 0 8px 0;">• ${latest.content}</p>`;
+
+                if (data.facts.length > 1) {
+                    html += `<button class="expand-facts-btn" onclick="toggleFacts()">[+] Виж всички факти (${data.facts.length})</button>`;
+                    html += `<div id="all-facts-list" style="display:none; margin-top:8px;">`;
+                    for (let i = 1; i < data.facts.length; i++) {
+                        html += `<p style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin:4px 0; color:#cbd5e1;">• ${data.facts[i].content}</p>`;
+                    }
+                    html += `</div>`;
+                }
+                factsContainer.innerHTML = html;
+            }
+
         } catch(e) { console.error("Workspace data error:", e); }
+    }
+
+    function toggleFacts() {
+        const el = document.getElementById("all-facts-list");
+        if (el) {
+            el.style.display = el.style.display === "block" ? "none" : "block";
+        }
     }
 
     function appendMessage(sender, text, monologue) {
@@ -388,27 +421,12 @@
 
             const data = await res.json();
             appendMessage("niki", data.reply, data.monologue);
+            
+            // Презареждаме само списъка с файлове и фактите, БЕЗ да чистим чата!
             loadWorkspaceData();
         } catch (err) {
             appendMessage("niki", "❌ Грешка при изпращане на съобщението.", err.toString());
         }
-    }
-
-    async function uploadFile() {
-        const fileInput = document.getElementById("file-upload");
-        if (!fileInput.files[0]) return;
-
-        const formData = new FormData();
-        formData.append("file", fileInput.files[0]);
-        formData.append("workspace", currentWorkspace);
-
-        await fetch("/upload", {
-            method: "POST",
-            body: formData
-        });
-
-        fileInput.value = "";
-        loadWorkspaceData();
     }
 
     loadWorkspaces();
