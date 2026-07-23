@@ -6,5 +6,4 @@ gunicorn
 scikit-learn
 numpy
 requests
-google-generativeai
 psycopg2-binary
