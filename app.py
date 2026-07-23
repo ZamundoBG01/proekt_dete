@@ -249,23 +249,25 @@ def chat():
             extracted = extract_text_from_file(fpath)
             library_text += f"\n--- ФАЙЛ: {fname} ---\n" + (extracted if extracted else "[ПРАЗЕН ФАЙЛ]")
 
-    # КОМАНДА: ИЗТРИВАНЕ НА ПРОЕКТ
-    match_del = re.match(r"^изтрий проект\s+(.+)$", message, re.IGNORECASE)
+    # ГЪВКАВА КОМАНДА ЗА ИЗТРИВАНЕ НА ПРОЕКТ/ДИРЕКТОРИЯ
+    match_del = re.match(r"^(изтрий|премахни)(\s+проект|\s+директория)?\s+(.+)$", message, re.IGNORECASE)
     if match_del:
-        target_ws = sanitize_ws_name(match_del.group(1))
+        target_ws = sanitize_ws_name(match_del.group(3))
         if target_ws == "general":
             return jsonify({"reply": "⚠️ Основният проект **GENERAL** не може да бъде изтрит.", "monologue": "Отказано изтриване."})
         
         target_path = os.path.join(WORKSPACES_DIR, target_ws)
         if os.path.exists(target_path):
             shutil.rmtree(target_path)
-            return jsonify({"reply": f"🗑️ Проектът **{target_ws.upper()}** беше изтрит завинаги.", "monologue": f"Изтриване: {target_ws}", "target_workspace": "general"})
+            return jsonify({"reply": f"🗑️ Проектът/директорията **{target_ws.upper()}** беше изтрит(а) завинаги.", "monologue": f"Изтриване: {target_ws}", "target_workspace": "general"})
+        else:
+            return jsonify({"reply": f"❌ Не бе намерен проект или директория с име **{target_ws.upper()}**.", "monologue": "Несъществуващ проект."})
 
-    # КОМАНДА: ПРЕИМЕНУВАНЕ НА ПРОЕКТ
-    match_ren = re.match(r"^преименувай проект\s+(.+)\s+на\s+(.+)$", message, re.IGNORECASE)
+    # ГЪВКАВА КОМАНДА ЗА ПРЕИМЕНУВАНЕ НА ПРОЕКТ
+    match_ren = re.match(r"^(преименувай)(\s+проект|\s+директория)?\s+(.+)\s+на\s+(.+)$", message, re.IGNORECASE)
     if match_ren:
-        old_ws = sanitize_ws_name(match_ren.group(1))
-        new_ws = sanitize_ws_name(match_ren.group(2))
+        old_ws = sanitize_ws_name(match_ren.group(3))
+        new_ws = sanitize_ws_name(match_ren.group(4))
 
         if old_ws == "general":
             return jsonify({"reply": "⚠️ Основният проект **GENERAL** не може да бъде преименуван.", "monologue": "Отказана операция."})
