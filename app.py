@@ -471,5 +471,48 @@ def delete_file():
             return jsonify({"message": f"Грешка при изтриване: {str(e)}"}), 500
     return jsonify({"message": "Файлът не бе намерен."}), 404
 
+# ... тук ти свършва досегашният код ...
+
+# ==========================================
+# НОВИ API МАРШРУТИ ЗА NIKI v2.0
+# ==========================================
+
+@app.route('/api/v2/plan', methods=['POST'])
+def generate_plan():
+    data = request.json or {}
+    goal = data.get("goal", "Анализ на проекта")
+    planner = ExecutionPlanner()
+    plan_steps = planner.create_plan(goal)
+    formatted_steps = [
+        {"step": s.step_id, "description": s.description, "role": s.assigned_role.value}
+        for s in plan_steps
+    ]
+    return jsonify({"goal": goal, "plan": formatted_steps})
+
+
+@app.route('/api/v2/curiosity/scan', methods=['GET'])
+def scan_gaps():
+    workspace_id = request.args.get("workspace_id", "general")
+    curiosity = CuriosityEngine(workspace_id)
+    dummy_objects = [
+        BaseObject("Martinala_Hero", "Hero", workspace_id, object_id="1"),
+        BaseObject("Unknown_Item", "Item", workspace_id, object_id="2")
+    ]
+    dummy_links = []
+    gaps = curiosity.scan_for_orphans(dummy_objects, dummy_links)
+    return jsonify({"workspace_id": workspace_id, "detected_gaps": gaps})
+
+
+@app.route('/api/v2/simulate', methods=['POST'])
+def run_sandbox_simulation():
+    data = request.json or {}
+    workspace_id = data.get("workspace_id", "martinala")
+    scenario = data.get("scenario", "Тест на икономиката")
+    sandbox = SimulationSandbox(workspace_id)
+    result = sandbox.run_simulation(scenario)
+    return jsonify(result)
+
+# СЪЩЕСТВУВАЩИЯТ СТАРТИРАЩ РЕД НА СЪРВЪРА (НАЙ-ОТДОЛУ):
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+    
