@@ -12,6 +12,7 @@ import docx
 from docx import Document
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from core_universe import WorkspaceContext, BaseObject, KnowledgeStatus, GraphLink, TimelineManager
 
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
