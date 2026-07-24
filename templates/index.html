@@ -47,6 +47,7 @@
             border: 1px solid var(--border-color);
             border-radius: 8px;
             overflow: hidden;
+            height: 100%;
         }
         .chat-header {
             padding: 12px 20px;
@@ -55,6 +56,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-shrink: 0;
         }
         .chat-header h2 {
             margin: 0;
@@ -73,7 +75,7 @@
             padding: 4px 8px;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 1rem;
+            font-size: 1.1rem;
         }
         .btn-fullscreen:hover {
             background-color: var(--border-color);
@@ -106,13 +108,14 @@
             border: 1px solid var(--border-color);
         }
         .msg-timestamp {
-            font-size: 0.7rem;
+            font-size: 0.72rem;
             margin-top: 6px;
             text-align: right;
             user-select: none;
+            font-weight: 500;
         }
         .message.user .msg-timestamp {
-            color: rgba(255, 255, 255, 0.75); /* Ясен бял цвят за твоите съобщения */
+            color: rgba(255, 255, 255, 0.85);
         }
         .message.niki .msg-timestamp {
             color: #8b949e;
@@ -140,6 +143,7 @@
             display: flex;
             flex-direction: column;
             gap: 10px;
+            flex-shrink: 0;
         }
         .input-controls {
             display: flex;
@@ -147,18 +151,23 @@
             align-items: center;
         }
         textarea {
-            flex: 1;
+            width: 100%;
             background-color: var(--bg-color);
             border: 1px solid var(--border-color);
             color: #fff;
-            padding: 10px;
+            padding: 12px;
             border-radius: 6px;
             resize: none;
-            min-height: 45px;
-            max-height: 180px; /* Автоматично разширяване до ~7 реда */
+            height: 110px; /* По подразбиране 5 видими реда */
+            max-height: 250px; /* Разширява се нагоре при дълъг текст */
             font-family: inherit;
+            font-size: 0.95rem;
             line-height: 1.4;
+            box-sizing: border-box;
             overflow-y: auto;
+        }
+        textarea:focus {
+            outline: 1px solid var(--accent-blue);
         }
         button {
             background-color: var(--accent-green);
@@ -175,12 +184,12 @@
             background-color: var(--accent-red);
             color: #fff;
             border: none;
-            padding: 2px 6px; /* 2 пъти по-малък бутон */
+            padding: 2px 6px;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 0.7rem;
-            height: 26px;
-            width: 26px;
+            font-size: 0.8rem;
+            height: 32px;
+            width: 32px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -332,9 +341,21 @@
         container.classList.toggle("fullscreen");
     }
 
+    // Автоматично разширяване на полето при писане
     function autoExpandTextarea(el) {
-        el.style.height = 'auto';
-        el.style.height = Math.min(el.scrollHeight, 180) + 'px';
+        el.style.height = '110px'; // Връща първоначалната височина за точно изчисление
+        const newHeight = Math.max(110, Math.min(el.scrollHeight, 250));
+        el.style.height = newHeight + 'px';
+    }
+
+    // Функция за взимане на ЛОКАЛНИЯ час от устройството на потребителя
+    function getLocalTimeString(serverTimestamp) {
+        if (!serverTimestamp) {
+            return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        // Ако има час от сървъра, показваме локално за браузъра
+        const now = new Date();
+        return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
 
     async function loadWorkspaces() {
@@ -426,7 +447,8 @@
             msgDiv.appendChild(thoughtBox);
         }
 
-        const timeStr = timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        // Взимаме часа от потребителското устройство
+        const timeStr = getLocalTimeString(timestamp);
         const timeDiv = document.createElement("div");
         timeDiv.className = "msg-timestamp";
         timeDiv.textContent = timeStr;
@@ -444,7 +466,7 @@
         
         appendMessageToUI("user", text);
         input.value = "";
-        input.style.height = '45px'; // Нулираме височината след изпращане
+        input.style.height = '110px'; // Нулираме обратно до 5 реда след изпращане
         
         const res = await fetch("/chat", {
             method: "POST",
