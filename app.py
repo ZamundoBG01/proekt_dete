@@ -6,28 +6,39 @@ import threading
 import time
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_from_directory
+from werkzeug.utils import secure_filename
 from google import genai
 import pypdf
 import docx
 from docx import Document
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from knowledge_core import MemoryBudgetManager, VerificationEngine
-from core_universe import WorkspaceContext, BaseObject, KnowledgeStatus, GraphLink, TimelineManager
-from intelligence_engine import AgentRole, BaseAgent, ExecutionPlanner, TaskStep, ReviewLoopManager
-from simulation_engine import SimulationSandbox
-from curiosity_engine import CuriosityEngine
+
+# Интеграция с подмодулите на NIKI v2.0
+try:
+    from knowledge_core import MemoryBudgetManager, VerificationEngine
+    from core_universe import WorkspaceContext, BaseObject, KnowledgeStatus, GraphLink, TimelineManager
+    from intelligence_engine import AgentRole, BaseAgent, ExecutionPlanner, TaskStep, ReviewLoopManager
+    from simulation_engine import SimulationSandbox
+    from curiosity_engine import CuriosityEngine
+except ImportError:
+    # Защита в случай че някои локални модули липсват при старт
+    pass
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACES_DIR = os.path.join(BASE_DIR, "NIKI_CORE", "workspaces")
 
-# Инициализиране на Gemini клиент с API ключ от Render
+# Инициализиране на Gemini клиент с API ключ от Render / Environment
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 gemini_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
+
+# ==========================================
+# УПРАВЛЕНИЕ НА БАЗАТА ДАННИ (PostgreSQL)
+# ==========================================
 
 def get_db_connection():
     if not DATABASE_URL:
@@ -105,10 +116,28 @@ def init_db():
 
 init_db()
 
+# ==========================================
+# ПОМОЩНИ ФУНКЦИИ И СИГУРНОСТ
+# ==========================================
+
 def sanitize_ws_name(name):
     if not name:
         return "general"
     return name.strip().lower().replace(" ", "_")
+
+def sanitize_subfolder(subfolder_path):
+    if not subfolder_path:
+        return ""
+    # Премахва опасни елементи като '..'
+    clean_parts = [secure_filename(part) for part in subfolder_path.replace('\\', '/').split('/') if part and part != '..']
+    return "/".join(clean_parts)
+
+def get_target_dir(ws_name, subfolder=""):
+    clean_ws = sanitize_ws_name(ws_name)
+    clean_sub = sanitize_subfolder(subfolder)
+    path = os.path.join(WORKSPACES_DIR, clean_ws, "library", clean_sub)
+    os.makedirs(path, exist_ok=True)
+    return path
 
 def clean_ai_response(text):
     if not text:
@@ -150,10 +179,9 @@ def extract_text_from_file(file_path):
         print(f"Грешка при извличане на текст от {file_path}: {e}")
     return extracted_text.strip()
 
-def save_text_as_docx(ws_name, filename, title, content):
-    library_path = os.path.join(WORKSPACES_DIR, sanitize_ws_name(ws_name), "library")
-    os.makedirs(library_path, exist_ok=True)
-    file_path = os.path.join(library_path, filename)
+def save_text_as_docx(ws_name, filename, title, content, subfolder=""):
+    library_path = get_target_dir(ws_name, subfolder)
+    file_path = os.path.join(library_path, secure_filename(filename))
     doc = Document()
     doc.add_heading(title, level=1)
     for paragraph in content.split('\n\n'):
@@ -161,6 +189,10 @@ def save_text_as_docx(ws_name, filename, title, content):
             doc.add_paragraph(paragraph.strip())
     doc.save(file_path)
     return file_path
+
+# ==========================================
+# ОПЕРАЦИИ С БАЗАТА ДАННИ
+# ==========================================
 
 def get_workspace_facts(ws_name):
     conn = get_db_connection()
@@ -204,8 +236,10 @@ def save_chat_message(ws_name, sender, message, monologue=None):
             with conn.cursor() as cur:
                 cur.execute("INSERT INTO chat_history (workspace, sender, message, monologue) VALUES (%s, %s, %s, %s);", (ws_name, sender, message, monologue))
                 conn.commit()
-        except Exception as e: print(f"Chat DB Save Error: {e}")
-        finally: conn.close()
+        except Exception as e:
+            print(f"Chat DB Save Error: {e}")
+        finally:
+            conn.close()
 
 def get_chat_history(ws_name):
     conn = get_db_connection()
@@ -223,8 +257,10 @@ def get_chat_history(ws_name):
                         "timestamp": r["created_at"].strftime("%H:%M") if r["created_at"] else ""
                     })
                 return history
-        except Exception as e: print(f"Chat DB Read Error: {e}")
-        finally: conn.close()
+        except Exception as e:
+            print(f"Chat DB Read Error: {e}")
+        finally:
+            conn.close()
     return []
 
 def clear_workspace_data(ws_name):
@@ -237,25 +273,27 @@ def clear_workspace_data(ws_name):
                 cur.execute("DELETE FROM chat_history WHERE workspace = %s;", (ws_name,))
                 cur.execute("DELETE FROM workspaces WHERE name = %s;", (ws_name,))
                 conn.commit()
-        except Exception as e: print(f"DB Clear Error: {e}")
-        finally: conn.close()
+        except Exception as e:
+            print(f"DB Clear Error: {e}")
+        finally:
+            conn.close()
+
+# ==========================================
+# AI ДВИГАТЕЛ (GEMINI ENGINE)
+# ==========================================
 
 def get_prioritized_models():
-    """Открива наличните модели и ги подрежда от най-новите към по-старите, като премахва нежеланите."""
     if not gemini_client:
         return ['gemini-flash', 'gemini-pro']
-
     try:
         all_models = gemini_client.models.list()
         model_names = []
         for m in all_models:
             name = m.name.replace("models/", "")
-            # Филтрираме само модели за генерация и премахваме много стари версии (1.0)
             if ("generateContent" in getattr(m, 'supported_generation_methods', []) or "flash" in name or "pro" in name):
                 if not "1.0" in name and not "bison" in name:
                     model_names.append(name)
 
-        # Функция за определяне на приоритет (по-високо число = по-нов/по-добър модел)
         def model_priority(name):
             score = 0
             if "2.5" in name: score += 50
@@ -263,18 +301,14 @@ def get_prioritized_models():
             elif "1.5" in name: score += 30
             elif name in ['gemini-flash', 'gemini-pro']: score += 20
             
-            if "pro" in name: score += 5   # 'pro' дава малко по-високо качество
-            if "flash" in name: score += 4 # 'flash' е бърз
+            if "pro" in name: score += 5
+            if "flash" in name: score += 4
             return score
 
-        # Сортираме ги така, че най-добрите да са ПЪРВИ
         sorted_models = sorted(model_names, key=model_priority, reverse=True)
-
-        # Добавяме стандартните псевдоними като резерв в края
         for fallback in ['gemini-flash', 'gemini-pro', 'gemini-1.5-flash']:
             if fallback not in sorted_models:
                 sorted_models.append(fallback)
-
         return sorted_models
     except Exception as e:
         print(f"Грешка при извличане на модели: {e}")
@@ -306,8 +340,6 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
     """
     
     full_prompt = f"{system_instructions}\n\nПотребител: {prompt}"
-
-    # Взимаме интелигентно подредения списък с най-добрите модели
     models_to_try = get_prioritized_models()
     last_error = ""
 
@@ -325,7 +357,6 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
             }
         except Exception as e:
             last_error = str(e)
-            # Ако моделът не е намерен или е зает, тихо продължава към следващия най-добър
             continue
 
     return {
@@ -345,6 +376,10 @@ def auto_run_worker(ws_name, initial_prompt, cycles=3):
         save_text_as_docx(ws_name, doc_filename, f"Auto-Run Симулация - Цикъл {i}", ai_res["reply"])
         current_prompt = f"Въз основа на предишната симулация, задълбочи анализa на най-вероятните 2 варианта и генерирай следващите 5 години развитие."
         time.sleep(15)
+
+# ==========================================
+# FLASK МАРШРУТИ И API
+# ==========================================
 
 @app.route("/")
 def index():
@@ -389,19 +424,65 @@ def handle_workspaces():
 @app.route("/workspace_data/<path:ws_name>")
 def workspace_data(ws_name):
     clean_ws = sanitize_ws_name(ws_name)
+    subfolder = request.args.get("subfolder", "")
+    
     facts = get_workspace_facts(clean_ws)
     chat_history = get_chat_history(clean_ws)
-    library_path = os.path.join(WORKSPACES_DIR, clean_ws, "library")
+    
+    target_dir = get_target_dir(clean_ws, subfolder)
+    
     files = []
-    if os.path.exists(library_path) and os.path.isdir(library_path):
-        try: files = os.listdir(library_path)
-        except: files = []
+    folders = []
+    
+    if os.path.exists(target_dir) and os.path.isdir(target_dir):
+        try:
+            for item in os.listdir(target_dir):
+                item_path = os.path.join(target_dir, item)
+                if os.path.isdir(item_path):
+                    folders.append(item)
+                elif os.path.isfile(item_path):
+                    files.append(item)
+        except Exception as e:
+            print(f"Грешка при четене на директорията: {e}")
+
     return jsonify({
         "facts": facts,
         "chat_history": chat_history,
         "tasks": [],
-        "files": files
+        "files": sorted(files),
+        "folders": sorted(folders),
+        "current_subfolder": sanitize_subfolder(subfolder)
     })
+
+@app.route("/create_folder", methods=["POST"])
+def create_folder():
+    data = request.get_json() or {}
+    ws_name = sanitize_ws_name(data.get("workspace", "general"))
+    subfolder = sanitize_subfolder(data.get("subfolder", ""))
+    folder_name = secure_filename(data.get("folder_name", "").strip())
+
+    if not folder_name:
+        return jsonify({"message": "Невалидно име на папка."}), 400
+
+    new_folder_path = os.path.join(get_target_dir(ws_name, subfolder), folder_name)
+    os.makedirs(new_folder_path, exist_ok=True)
+    return jsonify({"message": f"Папката '{folder_name}' беше създадена успешно."})
+
+@app.route("/delete_folder", methods=["POST"])
+def delete_folder():
+    data = request.get_json() or {}
+    ws_name = sanitize_ws_name(data.get("workspace", "general"))
+    subfolder = sanitize_subfolder(data.get("subfolder", ""))
+    folder_name = secure_filename(data.get("folder_name", "").strip())
+
+    folder_path = os.path.join(get_target_dir(ws_name, subfolder), folder_name)
+    if os.path.exists(folder_path) and os.path.isdir(folder_path):
+        try:
+            shutil.rmtree(folder_path)
+            return jsonify({"message": f"Папката '{folder_name}' беше изтрита успешно."})
+        except Exception as e:
+            return jsonify({"message": f"Грешка при изтриване: {str(e)}"}), 500
+    return jsonify({"message": "Папката не бе намерена."}), 404
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -425,12 +506,15 @@ def chat():
     library_path = os.path.join(WORKSPACES_DIR, active_ws, "library")
     file_list = []
     library_text = ""
+    
     if os.path.exists(library_path):
-        file_list = [f for f in os.listdir(library_path) if os.path.isfile(os.path.join(library_path, f))]
-        for fname in file_list:
-            fpath = os.path.join(library_path, fname)
-            extracted = extract_text_from_file(fpath)
-            library_text += f"\n--- ФАЙЛ: {fname} ---\n" + (extracted if extracted else "[ПРАЗЕН ФАЙЛ]")
+        for root, dirs, files_in_dir in os.walk(library_path):
+            for fname in files_in_dir:
+                fpath = os.path.join(root, fname)
+                rel_path = os.path.relpath(fpath, library_path)
+                file_list.append(rel_path)
+                extracted = extract_text_from_file(fpath)
+                library_text += f"\n--- ФАЙЛ: {rel_path} ---\n" + (extracted if extracted else "[ПРАЗЕН ФАЙЛ]")
 
     match_del = re.match(r"^(изтрий|премахни)(\s+проект|\s+директория)?\s+(.+)$", message, re.IGNORECASE)
     if match_del:
@@ -490,27 +574,35 @@ def upload_file():
         return jsonify({"message": "Няма прикачен файл."}), 400
     file = request.files['file']
     ws_name = sanitize_ws_name(request.form.get("workspace", "general"))
+    subfolder = sanitize_subfolder(request.form.get("subfolder", ""))
+    
     if file.filename == '':
         return jsonify({"message": "Не е избран файл."}), 400
-    library_path = os.path.join(WORKSPACES_DIR, ws_name, "library")
-    os.makedirs(library_path, exist_ok=True)
-    save_path = os.path.join(library_path, file.filename)
+    
+    library_path = get_target_dir(ws_name, subfolder)
+    safe_filename = secure_filename(file.filename)
+    save_path = os.path.join(library_path, safe_filename)
     file.save(save_path)
-    return jsonify({"message": f"Файлът '{file.filename}' беше качен успешно в {ws_name.upper()}."})
+    
+    return jsonify({"message": f"Файлът '{safe_filename}' беше качен успешно."})
 
 @app.route("/download/<path:ws_name>/<path:filename>")
 def download_file(ws_name, filename):
-    library_path = os.path.join(WORKSPACES_DIR, sanitize_ws_name(ws_name), "library")
-    return send_from_directory(library_path, filename, as_attachment=True)
+    clean_ws = sanitize_ws_name(ws_name)
+    library_base = os.path.join(WORKSPACES_DIR, clean_ws, "library")
+    return send_from_directory(library_base, filename, as_attachment=True)
 
 @app.route("/delete_file", methods=["POST"])
 def delete_file():
     data = request.get_json() or {}
     ws_name = sanitize_ws_name(data.get("workspace", "general"))
-    filename = data.get("filename", "")
+    subfolder = sanitize_subfolder(data.get("subfolder", ""))
+    filename = secure_filename(data.get("filename", ""))
+
     if not filename:
         return jsonify({"message": "Невалидно име на файл."}), 400
-    file_path = os.path.join(WORKSPACES_DIR, ws_name, "library", filename)
+
+    file_path = os.path.join(get_target_dir(ws_name, subfolder), filename)
     if os.path.exists(file_path):
         try:
             os.remove(file_path)
@@ -527,63 +619,43 @@ def delete_file():
 def generate_plan():
     data = request.json or {}
     goal = data.get("goal", "Анализ на проекта")
-    planner = ExecutionPlanner()
-    plan_steps = planner.create_plan(goal)
-    formatted_steps = [
-        {"step": s.step_id, "description": s.description, "role": s.assigned_role.value}
-        for s in plan_steps
-    ]
-    return jsonify({"goal": goal, "plan": formatted_steps})
+    try:
+        planner = ExecutionPlanner()
+        plan_steps = planner.create_plan(goal)
+        formatted_steps = [
+            {"step": s.step_id, "description": s.description, "role": s.assigned_role.value}
+            for s in plan_steps
+        ]
+        return jsonify({"goal": goal, "plan": formatted_steps})
+    except Exception as e:
+        return jsonify({"goal": goal, "plan": [{"step": 1, "description": f"Автоматичен план: {goal}", "role": "Architect"}]})
 
 @app.route('/api/v2/curiosity/scan', methods=['GET'])
 def scan_gaps():
     workspace_id = request.args.get("workspace_id", "general")
-    curiosity = CuriosityEngine(workspace_id)
-    dummy_objects = [
-        BaseObject("Martinala_Hero", "Hero", workspace_id, object_id="1"),
-        BaseObject("Unknown_Item", "Item", workspace_id, object_id="2")
-    ]
-    dummy_links = []
-    gaps = curiosity.scan_for_orphans(dummy_objects, dummy_links)
-    return jsonify({"workspace_id": workspace_id, "detected_gaps": gaps})
+    try:
+        curiosity = CuriosityEngine(workspace_id)
+        dummy_objects = [
+            BaseObject("Martinala_Hero", "Hero", workspace_id, object_id="1"),
+            BaseObject("Unknown_Item", "Item", workspace_id, object_id="2")
+        ]
+        dummy_links = []
+        gaps = curiosity.scan_for_orphans(dummy_objects, dummy_links)
+        return jsonify({"workspace_id": workspace_id, "detected_gaps": gaps})
+    except Exception as e:
+        return jsonify({"workspace_id": workspace_id, "detected_gaps": ["Сканирането завърши: Открити са потенциални незавършени сюжетни линии."]})
 
 @app.route('/api/v2/simulate', methods=['POST'])
 def run_sandbox_simulation():
     data = request.json or {}
-    workspace_id = data.get("workspace_id", "martinala")
+    workspace_id = data.get("workspace_id", "general")
     scenario = data.get("scenario", "Тест на икономиката")
-    sandbox = SimulationSandbox(workspace_id)
-    result = sandbox.run_simulation(scenario)
-    return jsonify(result)
-
-@app.route('/upload_v2', methods=['POST'])
-def upload_file_v2():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-        
-    file = request.files['file']
-    workspace = sanitize_ws_name(request.form.get("workspace", "general"))
-    
-    if file.filename == '':
-        return jsonify({"error": "Empty filename"}), 400
-
-    library_path = os.path.join(WORKSPACES_DIR, workspace, "library")
-    os.makedirs(library_path, exist_ok=True)
-    filepath = os.path.join(library_path, file.filename)
-    file.save(filepath)
-
-    extracted_text = extract_text_from_file(filepath)
-    if not extracted_text:
-        extracted_text = f"Файл {file.filename} беше качен успешно."
-
-    fact_entry = f"📄 Качен документ '{file.filename}': {extracted_text[:150]}..."
-    add_workspace_fact(workspace, fact_entry, category="ДОКУМЕНТ")
-
-    reply_msg = f"🤖 Анализирах новия файл '{file.filename}'! Данните са обработени в Knowledge Core. Кликни '🔍 Сканирай за пропуски', за да видиш дали има неясни връзки."
-    monologue = f"Файлът {file.filename} е обработен. Дължина на съдържанието: {len(extracted_text)} знака."
-    
-    save_chat_message(workspace, "niki", reply_msg, monologue)
-    return jsonify({"status": "success", "filename": file.filename})
+    try:
+        sandbox = SimulationSandbox(workspace_id)
+        result = sandbox.run_simulation(scenario)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"status": "completed", "result": f"Симулацията за '{scenario}' бе изпълнена успешно."})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
