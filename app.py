@@ -513,6 +513,52 @@ def run_sandbox_simulation():
     result = sandbox.run_simulation(scenario)
     return jsonify(result)
 
+# ==========================================
+# ОБНОВЕНО КАЧВАНЕ НА ФАЙЛОВЕ ЗА NIKI v2.0
+# ==========================================
+
+@app.route('/upload_v2', methods=['POST'])
+def upload_file_v2():
+    """Качване на файл + Автоматичен анализ от Knowledge Core & Curiosity Engine"""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+        
+    file = request.files['file']
+    workspace = request.form.get("workspace", "general")
+    
+    if file.filename == '':
+        return jsonify({"error": "Empty filename"}), 400
+
+    ws_dir = os.path.join(WORKSPACE_DIR, workspace)
+    os.makedirs(ws_dir, exist_ok=True)
+    filepath = os.path.join(ws_dir, file.filename)
+    file.save(filepath)
+
+    extracted_text = ""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            extracted_text = f.read()
+    except Exception:
+        extracted_text = f"Файл {file.filename} беше качен успешно."
+
+    kc = KnowledgeCore(workspace)
+    fact_entry = f"Документ '{file.filename}': {extracted_text[:150]}..."
+    kc.add_fact(fact_entry)
+
+    data = load_workspace_data(workspace)
+    data["facts"].append({"content": f"📄 Качен документ: {file.filename}"})
+    
+    curiosity = CuriosityEngine(workspace)
+    data["chat_history"].append({
+        "sender": "niki",
+        "message": f"🤖 Анализирах новия файл '{file.filename}'! Данните са обработени в Knowledge Core. Кликни '🔍 Сканирай за пропуски', за да видиш дали има неясни връзки.",
+        "monologue": f"Файлът {file.filename} е обработен. Дължина на съдържанието: {len(extracted_text)} знака.",
+        "timestamp": ""
+    })
+    
+    save_workspace_data(workspace, data)
+    return jsonify({"status": "success", "filename": file.filename})
+
 # СЪЩЕСТВУВАЩИЯТ СТАРТИРАЩ РЕД НА СЪРВЪРА (НАЙ-ОТДОЛУ):
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
