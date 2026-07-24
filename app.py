@@ -267,8 +267,9 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
     
     full_prompt = f"{system_instructions}\n\nПотребител: {prompt}"
 
-    # Списък с актуални модели за автоматично превключване
-    models_to_try = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+    # Офицaлни, стандартизирани имена на моделите за Google GenAI SDK
+    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro']
+    last_error = ""
 
     for model_name in models_to_try:
         for attempt in range(2):
@@ -284,18 +285,16 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
                     "thought": f"🧠 Вътрешен монолог / Анализ:\n- Използвани факти от DB: {len(context_facts)}\n- Прочетени файлове от библиотеката: {len(file_list)}\n- Успешно използван AI Модел: {model_name}"
                 }
             except Exception as e:
-                err_str = str(e)
-                # При 404 (моделът не съществува в тази версия/регион) отиваме на следващия
-                if "404" in err_str or "NOT_FOUND" in err_str:
-                    break
-                # При 503 (претоварване) изчакваме и пробваме пак с същия
-                if ("503" in err_str or "UNAVAILABLE" in err_str) and attempt < 1:
+                last_error = str(e)
+                if "404" in last_error or "NOT_FOUND" in last_error:
+                    break  # Продължи с друг модел
+                if ("503" in last_error or "UNAVAILABLE" in last_error) and attempt < 1:
                     time.sleep(1.5)
                     continue
 
     return {
-        "reply": "В момента има проблем със свързването към Gemini API. Моля, проверете API ключа си.",
-        "thought": "Всички налични Gemini модели върнаха грешка."
+        "reply": f"Грешка при свързването с Gemini API. Проверете дали GEMINI_API_KEY е валиден в Render. Детайли: {last_error}",
+        "thought": f"Последна грешка от SDK-то: {last_error}"
     }
 
 def auto_run_worker(ws_name, initial_prompt, cycles=3):
