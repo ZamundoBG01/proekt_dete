@@ -14,6 +14,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from knowledge_core import MemoryBudgetManager, VerificationEngine
 from core_universe import WorkspaceContext, BaseObject, KnowledgeStatus, GraphLink, TimelineManager
+from intelligence_engine import AgentRole, BaseAgent, ExecutionPlanner, TaskStep, ReviewLoopManager
 
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
