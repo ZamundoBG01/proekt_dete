@@ -240,6 +240,46 @@ def clear_workspace_data(ws_name):
         except Exception as e: print(f"DB Clear Error: {e}")
         finally: conn.close()
 
+def get_prioritized_models():
+    """Открива наличните модели и ги подрежда от най-новите към по-старите, като премахва нежеланите."""
+    if not gemini_client:
+        return ['gemini-flash', 'gemini-pro']
+
+    try:
+        all_models = gemini_client.models.list()
+        model_names = []
+        for m in all_models:
+            name = m.name.replace("models/", "")
+            # Филтрираме само модели за генерация и премахваме много стари версии (1.0)
+            if ("generateContent" in getattr(m, 'supported_generation_methods', []) or "flash" in name or "pro" in name):
+                if not "1.0" in name and not "bison" in name:
+                    model_names.append(name)
+
+        # Функция за определяне на приоритет (по-високо число = по-нов/по-добър модел)
+        def model_priority(name):
+            score = 0
+            if "2.5" in name: score += 50
+            elif "2.0" in name: score += 40
+            elif "1.5" in name: score += 30
+            elif name in ['gemini-flash', 'gemini-pro']: score += 20
+            
+            if "pro" in name: score += 5   # 'pro' дава малко по-високо качество
+            if "flash" in name: score += 4 # 'flash' е бърз
+            return score
+
+        # Сортираме ги така, че най-добрите да са ПЪРВИ
+        sorted_models = sorted(model_names, key=model_priority, reverse=True)
+
+        # Добавяме стандартните псевдоними като резерв в края
+        for fallback in ['gemini-flash', 'gemini-pro', 'gemini-1.5-flash']:
+            if fallback not in sorted_models:
+                sorted_models.append(fallback)
+
+        return sorted_models
+    except Exception as e:
+        print(f"Грешка при извличане на модели: {e}")
+        return ['gemini-flash', 'gemini-pro', 'gemini-1.5-flash']
+
 def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
     if not gemini_client:
         return {
@@ -267,34 +307,30 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
     
     full_prompt = f"{system_instructions}\n\nПотребител: {prompt}"
 
-    # Офицaлни, стандартизирани имена на моделите за Google GenAI SDK
-    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro']
+    # Взимаме интелигентно подредения списък с най-добрите модели
+    models_to_try = get_prioritized_models()
     last_error = ""
 
     for model_name in models_to_try:
-        for attempt in range(2):
-            try:
-                response = gemini_client.models.generate_content(
-                    model=model_name,
-                    contents=full_prompt
-                )
-                raw_reply = response.text
-                cleaned_reply = clean_ai_response(raw_reply)
-                return {
-                    "reply": cleaned_reply,
-                    "thought": f"🧠 Вътрешен монолог / Анализ:\n- Използвани факти от DB: {len(context_facts)}\n- Прочетени файлове от библиотеката: {len(file_list)}\n- Успешно използван AI Модел: {model_name}"
-                }
-            except Exception as e:
-                last_error = str(e)
-                if "404" in last_error or "NOT_FOUND" in last_error:
-                    break  # Продължи с друг модел
-                if ("503" in last_error or "UNAVAILABLE" in last_error) and attempt < 1:
-                    time.sleep(1.5)
-                    continue
+        try:
+            response = gemini_client.models.generate_content(
+                model=model_name,
+                contents=full_prompt
+            )
+            raw_reply = response.text
+            cleaned_reply = clean_ai_response(raw_reply)
+            return {
+                "reply": cleaned_reply,
+                "thought": f"🧠 Вътрешен монолог:\n- Използван модел: {model_name}\n- Използвани факти от DB: {len(context_facts)}\n- Прочетени файлове от библиотеката: {len(file_list)}"
+            }
+        except Exception as e:
+            last_error = str(e)
+            # Ако моделът не е намерен или е зает, тихо продължава към следващия най-добър
+            continue
 
     return {
-        "reply": f"Грешка при свързването с Gemini API. Проверете дали GEMINI_API_KEY е валиден в Render. Детайли: {last_error}",
-        "thought": f"Последна грешка от SDK-то: {last_error}"
+        "reply": f"Грешка при свързването с Gemini API. Моля, уверете се, че GEMINI_API_KEY е валиден. Детайли: {last_error}",
+        "thought": f"Пробвани модели: {models_to_try}. Последна грешка: {last_error}"
     }
 
 def auto_run_worker(ws_name, initial_prompt, cycles=3):
