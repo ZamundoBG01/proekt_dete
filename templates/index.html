@@ -158,8 +158,8 @@
             padding: 12px;
             border-radius: 6px;
             resize: none;
-            height: 110px; /* По подразбиране 5 видими реда */
-            max-height: 250px; /* Разширява се нагоре при дълъг текст */
+            height: 110px;
+            max-height: 250px;
             font-family: inherit;
             font-size: 0.95rem;
             line-height: 1.4;
@@ -287,6 +287,13 @@
         </div>
         <div class="chat-history" id="chat-history"></div>
         <div class="input-area">
+            <!-- NIKI v2.0 Control Panel -->
+            <div class="v2-controls" style="display: flex; gap: 8px; margin-bottom: 5px; flex-wrap: wrap;">
+                <button onclick="runCuriosityScan()" style="background-color: #21262d; border: 1px solid var(--border-color); padding: 6px 10px; font-size: 0.85rem;">🔍 Сканирай за пропуски</button>
+                <button onclick="generateTaskPlan()" style="background-color: #21262d; border: 1px solid var(--border-color); padding: 6px 10px; font-size: 0.85rem;">🤖 План за задача</button>
+                <button onclick="runSimulation()" style="background-color: #21262d; border: 1px solid var(--border-color); padding: 6px 10px; font-size: 0.85rem;">🧪 Симулация</button>
+            </div>
+
             <textarea id="user-input" placeholder="Напиши инструкция тук... (Enter за изпращане, Shift+Enter за нов ред)" oninput="autoExpandTextarea(this)"></textarea>
             <div class="input-controls">
                 <label class="auto-run-check">
@@ -341,19 +348,16 @@
         container.classList.toggle("fullscreen");
     }
 
-    // Автоматично разширяване на полето при писане
     function autoExpandTextarea(el) {
-        el.style.height = '110px'; // Връща първоначалната височина за точно изчисление
+        el.style.height = '110px';
         const newHeight = Math.max(110, Math.min(el.scrollHeight, 250));
         el.style.height = newHeight + 'px';
     }
 
-    // Функция за взимане на ЛОКАЛНИЯ час от устройството на потребителя
     function getLocalTimeString(serverTimestamp) {
         if (!serverTimestamp) {
             return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
-        // Ако има час от сървъра, показваме локално за браузъра
         const now = new Date();
         return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
@@ -447,7 +451,6 @@
             msgDiv.appendChild(thoughtBox);
         }
 
-        // Взимаме часа от потребителското устройство
         const timeStr = getLocalTimeString(timestamp);
         const timeDiv = document.createElement("div");
         timeDiv.className = "msg-timestamp";
@@ -466,7 +469,7 @@
         
         appendMessageToUI("user", text);
         input.value = "";
-        input.style.height = '110px'; // Нулираме обратно до 5 реда след изпращане
+        input.style.height = '110px';
         
         const res = await fetch("/chat", {
             method: "POST",
@@ -540,6 +543,39 @@
         await fetch("/upload", { method: "POST", body: formData });
         fileInput.value = "";
         loadWorkspaceData();
+    }
+
+    // НОВИ ФУНКЦИИ ЗА NIKI v2.0
+    async function runCuriosityScan() {
+        const res = await fetch(`/api/v2/curiosity/scan?workspace_id=${activeWorkspace}`);
+        const data = await res.json();
+        alert("🔍 [Curiosity Engine] Открити пропуски/изолирани обекти:\n\n" + JSON.stringify(data.detected_gaps, null, 2));
+    }
+
+    async function generateTaskPlan() {
+        const goal = prompt("Въведете цел за планиране:", `Анализ на проект ${activeWorkspace.toUpperCase()}`);
+        if (!goal) return;
+        
+        const res = await fetch('/api/v2/plan', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ goal: goal })
+        });
+        const data = await res.json();
+        alert("🤖 [Planner Engine] Генериран план от агенти:\n\n" + JSON.stringify(data.plan, null, 2));
+    }
+
+    async function runSimulation() {
+        const scenario = prompt("Въведете сценарий за симулация:", "Промяна в правилата или баланса");
+        if (!scenario) return;
+        
+        const res = await fetch('/api/v2/simulate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ workspace_id: activeWorkspace, scenario: scenario })
+        });
+        const data = await res.json();
+        alert("🧪 [Simulation Sandbox] Резултат от симулацията:\n\n" + JSON.stringify(data, null, 2));
     }
 
     document.getElementById("user-input").addEventListener("keydown", function(e) {
