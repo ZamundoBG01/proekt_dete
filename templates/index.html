@@ -29,7 +29,7 @@
         }
         .container {
             display: grid;
-            grid-template-columns: 1fr 340px;
+            grid-template-columns: 1fr 360px;
             gap: 20px;
             width: 100%;
             max-width: 1400px;
@@ -48,7 +48,30 @@
             border-radius: 8px;
             overflow: hidden;
             height: 100%;
+            position: relative;
         }
+        
+        /* Drag Overlay за визуализация при влачене */
+        .drag-overlay {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(31, 111, 235, 0.85);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            color: white;
+            font-size: 1.5rem;
+            font-weight: bold;
+            border: 3px dashed #ffffff;
+            border-radius: 8px;
+        }
+        .chat-section.drag-over .drag-overlay,
+        .panel-file-zone.drag-over .drag-overlay {
+            display: flex;
+        }
+
         .chat-header {
             padding: 12px 20px;
             background-color: #21262d;
@@ -128,22 +151,6 @@
         .message.niki .msg-timestamp {
             color: #8b949e;
         }
-        .thought-box {
-            margin-top: 10px;
-            padding: 10px;
-            background-color: #0d1117;
-            border: 1px dashed var(--border-color);
-            border-radius: 6px;
-            font-size: 0.85rem;
-            color: #8b949e;
-        }
-        .thought-toggle {
-            cursor: pointer;
-            color: var(--accent-blue);
-            font-size: 0.85rem;
-            margin-top: 5px;
-            display: inline-block;
-        }
         .input-area {
             padding: 15px;
             background-color: #21262d;
@@ -216,6 +223,7 @@
             border: 1px solid var(--border-color);
             border-radius: 8px;
             padding: 15px;
+            position: relative;
         }
         .panel h3 {
             margin-top: 0;
@@ -243,13 +251,34 @@
             margin-bottom: 8px;
             align-items: center;
         }
-        .file-item {
+        
+        /* ДИРЕКТОРИИ И ФАЙЛОВЕ */
+        .path-breadcrumbs {
+            font-size: 0.8rem;
+            color: var(--accent-blue);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            word-break: break-all;
+        }
+        .file-item, .folder-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 6px 0;
+            padding: 6px 8px;
             border-bottom: 1px solid var(--border-color);
             font-size: 0.85rem;
+            border-radius: 4px;
+        }
+        .folder-item {
+            background-color: #1c2128;
+            cursor: pointer;
+            color: #f0f6fc;
+            font-weight: 500;
+        }
+        .folder-item:hover {
+            background-color: #2d333b;
         }
         .file-item a {
             color: var(--accent-blue);
@@ -268,21 +297,11 @@
             padding: 2px 4px;
             font-size: 0.85rem;
         }
-        .fact-item {
-            font-size: 0.85rem;
-            padding: 6px 0;
-            border-bottom: 1px solid var(--border-color);
-            color: #8b949e;
-        }
-        .auto-run-check {
+        .folder-controls {
             display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 0.85rem;
-            color: var(--accent-blue);
+            gap: 5px;
+            margin-top: 8px;
         }
-        
-        /* Анимация за мислене */
         .dots::after {
             content: '';
             animation: dotsAnim 1.5s infinite;
@@ -296,8 +315,14 @@
     </style>
 </head>
 <body>
+
 <div class="container" id="main-container">
-    <div class="chat-section">
+    <!-- ЧАТ ЗОНА C DRAG & DROP -->
+    <div class="chat-section" id="chat-section">
+        <div class="drag-overlay">
+            📁 Пусни файла тук за качване!
+        </div>
+
         <div class="chat-header">
             <h2>N.I.K.I. - Worldbuilding & Simulations</h2>
             <div class="header-actions">
@@ -307,7 +332,6 @@
         </div>
         <div class="chat-history" id="chat-history"></div>
         <div class="input-area">
-            <!-- NIKI v2.0 Control Panel -->
             <div class="v2-controls" style="display: flex; gap: 8px; margin-bottom: 5px; flex-wrap: wrap;">
                 <button onclick="runCuriosityScan()" style="background-color: #21262d; border: 1px solid var(--border-color); padding: 6px 10px; font-size: 0.85rem;">🔍 Сканирай за пропуски</button>
                 <button onclick="generateTaskPlan()" style="background-color: #21262d; border: 1px solid var(--border-color); padding: 6px 10px; font-size: 0.85rem;">🤖 План за задача</button>
@@ -316,7 +340,7 @@
 
             <textarea id="user-input" placeholder="Напиши инструкция тук... (Enter за изпращане, Shift+Enter за нов ред)" oninput="autoExpandTextarea(this)"></textarea>
             <div class="input-controls">
-                <label class="auto-run-check">
+                <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:var(--accent-blue);">
                     <input type="checkbox" id="auto-run-toggle"> 🔄 Автоматичен режим (Auto-Run 24/7)
                 </label>
                 <div style="flex:1;"></div>
@@ -325,6 +349,7 @@
         </div>
     </div>
 
+    <!-- СТРАНИЧЕН ПАНЕЛ -->
     <div class="sidebar">
         <div class="panel">
             <h3 style="cursor: default;">📁 Избор на Проект</h3>
@@ -338,11 +363,25 @@
             </div>
         </div>
 
-        <div class="panel">
-            <h3 style="cursor: default;">📚 Библиотека & Документи (.docx)</h3>
+        <!-- ФАЙЛОВА СИСТЕМА С ПОДПАПКИ И DRAG & DROP -->
+        <div class="panel panel-file-zone" id="file-panel">
+            <h3 style="cursor: default;">📚 Библиотека & Файлове</h3>
+            
+            <!-- Хлебни трохи (Breadcrumbs) за навигация -->
+            <div class="path-breadcrumbs" id="path-breadcrumbs">
+                <span>Path: /</span>
+            </div>
+
             <div id="file-list"></div>
+
+            <!-- Контроли за създаване на подпапка и качване -->
+            <div class="folder-controls">
+                <input type="text" id="new-folder-name" placeholder="Нова подпапка...">
+                <button onclick="createFolder()" style="padding: 6px 10px; background-color: #21262d; border: 1px solid var(--border-color);">📁 +</button>
+            </div>
+
             <div style="margin-top: 10px;">
-                <input type="file" id="file-upload" style="display: none;" onchange="uploadFile()">
+                <input type="file" id="file-upload" style="display: none;" onchange="uploadFileFromInput()">
                 <button onclick="document.getElementById('file-upload').click()" style="width: 100%; background-color: #21262d; border: 1px solid var(--border-color); padding: 8px;">📤 Качи файл</button>
             </div>
         </div>
@@ -361,13 +400,13 @@
 
 <script>
     let activeWorkspace = "general";
+    let currentSubFolder = ""; // Пази текущата подпапка
     let factsExpanded = true;
     let thinkingTimer = null;
     let thinkingSeconds = 0;
 
     function toggleFullScreen() {
-        const container = document.getElementById("main-container");
-        container.classList.toggle("fullscreen");
+        document.getElementById("main-container").classList.toggle("fullscreen");
     }
 
     function autoExpandTextarea(el) {
@@ -377,11 +416,7 @@
     }
 
     function getLocalTimeString(serverTimestamp) {
-        if (!serverTimestamp) {
-            return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        }
-        const now = new Date();
-        return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
 
     async function loadWorkspaces() {
@@ -401,18 +436,13 @@
     }
 
     async function loadWorkspaceData() {
-        const res = await fetch(`/workspace_data/${activeWorkspace}`);
+        const res = await fetch(`/workspace_data/${activeWorkspace}?subfolder=${encodeURIComponent(currentSubFolder)}`);
         const data = await res.json();
         
         const chatContainer = document.getElementById("chat-history");
-        
-        // УМЕН СКРОЛ: Проверяваме дали потребителят е скролнал нагоре
         const isUserAtBottom = (chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight) < 80;
         
-        // Ако потребителят чете нагоре и N.I.K.I. не мисли в момента, НЕ пренаписваме HTML-а, за да не му пречим
-        if (!isUserAtBottom && document.getElementById("thinking-msg")) {
-            // Само ако има статус "мисли", поддържаме потока
-        } else if (isUserAtBottom) {
+        if (isUserAtBottom || chatContainer.children.length === 0) {
             chatContainer.innerHTML = "";
             data.chat_history.forEach(msg => {
                 appendMessageToUI(msg.sender, msg.message, msg.monologue, msg.timestamp, false);
@@ -420,17 +450,37 @@
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
+        // Обновяване на Хлебните трохи (Breadcrumbs)
+        const bc = document.getElementById("path-breadcrumbs");
+        bc.innerHTML = `<span>Path: /${currentSubFolder}</span>`;
+        if (currentSubFolder) {
+            bc.innerHTML += ` <button onclick="navigateUp()" style="padding: 2px 6px; font-size: 0.75rem; background:#30363d;">⬅️ Назад</button>`;
+        }
+
+        // Рендериране на Файлове и Папки
         const fileList = document.getElementById("file-list");
         fileList.innerHTML = "";
-        if (data.files.length === 0) {
-            fileList.innerHTML = `<span style="color:#8b949e; font-size:0.85rem;">Няма налични файлове.</span>`;
-        } else {
+
+        // Показваме подпапките първо
+        if (data.folders && data.folders.length > 0) {
+            data.folders.forEach(folder => {
+                fileList.innerHTML += `
+                    <div class="folder-item">
+                        <span onclick="enterFolder('${folder}')">📁 ${folder}</span>
+                        <button class="btn-icon" onclick="deleteFolder('${folder}')" title="Изтрий папката">❌</button>
+                    </div>
+                `;
+            });
+        }
+
+        // Показваме файловете
+        if (data.files && data.files.length > 0) {
             data.files.forEach(f => {
                 fileList.innerHTML += `
                     <div class="file-item">
-                        <span title="${f}">${f.length > 16 ? f.substring(0,13)+'...' : f}</span>
+                        <span title="${f}">📄 ${f.length > 15 ? f.substring(0,12)+'...' : f}</span>
                         <div class="file-actions">
-                            <a href="/download/${activeWorkspace}/${encodeURIComponent(f)}" target="_blank">[Свали]</a>
+                            <a href="/download/${activeWorkspace}/${encodeURIComponent(currentSubFolder ? currentSubFolder + '/' + f : f)}" target="_blank">[Свали]</a>
                             <button class="btn-icon" onclick="deleteFile('${f}')" title="Изтрий файла">❌</button>
                         </div>
                     </div>
@@ -438,17 +488,108 @@
             });
         }
 
+        if ((!data.folders || data.folders.length === 0) && (!data.files || data.files.length === 0)) {
+            fileList.innerHTML = `<span style="color:#8b949e; font-size:0.85rem;">Папката е празна.</span>`;
+        }
+
+        // Рендериране на Фактите
         const factsList = document.getElementById("facts-list");
         factsList.innerHTML = "";
-        if (data.facts.length === 0) {
+        if (!data.facts || data.facts.length === 0) {
             factsList.innerHTML = `<span style="color:#8b949e; font-size:0.85rem;">Няма записани факти.</span>`;
         } else {
             data.facts.forEach(fact => {
-                factsList.innerHTML += `<div class="fact-item">• ${fact.content}</div>`;
+                factsList.innerHTML += `<div class="fact-item" style="font-size:0.85rem; padding:4px 0; border-bottom:1px solid #30363d; color:#8b949e;">• ${fact.content}</div>`;
             });
         }
     }
 
+    /* НАВИГАЦИЯ В ПАПКИ */
+    function enterFolder(folderName) {
+        currentSubFolder = currentSubFolder ? `${currentSubFolder}/${folderName}` : folderName;
+        loadWorkspaceData();
+    }
+
+    function navigateUp() {
+        if (!currentSubFolder) return;
+        const parts = currentSubFolder.split('/');
+        parts.pop();
+        currentSubFolder = parts.join('/');
+        loadWorkspaceData();
+    }
+
+    async function createFolder() {
+        const input = document.getElementById("new-folder-name");
+        const folderName = input.value.trim();
+        if (!folderName) return;
+
+        await fetch("/create_folder", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ workspace: activeWorkspace, subfolder: currentSubFolder, folder_name: folderName })
+        });
+        input.value = "";
+        loadWorkspaceData();
+    }
+
+    async function deleteFolder(folderName) {
+        if (confirm(`Сигурни ли сте, че искате да изтриете папката "${folderName}" и съдържанието ѝ?`)) {
+            await fetch("/delete_folder", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ workspace: activeWorkspace, subfolder: currentSubFolder, folder_name: folderName })
+            });
+            loadWorkspaceData();
+        }
+    }
+
+    /* DRAG & DROP ФУНКЦИОНАЛНОСТ */
+    const chatSection = document.getElementById("chat-section");
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        chatSection.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            chatSection.classList.add('drag-over');
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        chatSection.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            chatSection.classList.remove('drag-over');
+        }, false);
+    });
+
+    chatSection.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        if (files.length > 0) {
+            handleUploadedFiles(files);
+        }
+    });
+
+    function uploadFileFromInput() {
+        const fileInput = document.getElementById("file-upload");
+        if (fileInput.files.length > 0) {
+            handleUploadedFiles(fileInput.files);
+        }
+    }
+
+    async function handleUploadedFiles(files) {
+        for (let i = 0; i < files.length; i++) {
+            const formData = new FormData();
+            formData.append("file", files[i]);
+            formData.append("workspace", activeWorkspace);
+            formData.append("subfolder", currentSubFolder);
+
+            await fetch("/upload", { method: "POST", body: formData });
+        }
+        loadWorkspaceData();
+    }
+
+    /* ДРУГИ ОПЕРАЦИИ */
     function toggleFactsSection() {
         const container = document.getElementById("facts-container");
         const arrow = document.getElementById("facts-arrow");
@@ -462,25 +603,7 @@
         const msgDiv = document.createElement("div");
         msgDiv.className = `message ${sender === 'user' ? 'user' : 'niki'}`;
         
-        const textNode = document.createTextNode(text);
-        msgDiv.appendChild(textNode);
-
-        if (monologue && sender !== 'user') {
-            const toggle = document.createElement("div");
-            toggle.className = "thought-toggle";
-            toggle.textContent = "🔍 Виж вътрешен монолог / мисли";
-            
-            const thoughtBox = document.createElement("div");
-            thoughtBox.className = "thought-box";
-            thoughtBox.style.display = "none";
-            thoughtBox.textContent = monologue;
-            toggle.onclick = () => {
-                thoughtBox.style.display = thoughtBox.style.display === "none" ? "block" : "none";
-            };
-            msgDiv.appendChild(document.createElement("br"));
-            msgDiv.appendChild(toggle);
-            msgDiv.appendChild(thoughtBox);
-        }
+        msgDiv.appendChild(document.createTextNode(text));
 
         const timeStr = getLocalTimeString(timestamp);
         const timeDiv = document.createElement("div");
@@ -490,9 +613,7 @@
 
         chatContainer.appendChild(msgDiv);
         
-        if (autoScroll) {
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
+        if (autoScroll) chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
     function showThinkingIndicator() {
@@ -531,7 +652,6 @@
         input.value = "";
         input.style.height = '110px';
         
-        // Блокираме бутона и показваме таймера за мислене
         sendBtn.disabled = true;
         showThinkingIndicator();
 
@@ -548,6 +668,7 @@
 
             if (data.target_workspace) {
                 activeWorkspace = data.target_workspace;
+                currentSubFolder = "";
                 loadWorkspaces();
             } else {
                 appendMessageToUI("niki", data.reply, data.monologue);
@@ -562,6 +683,7 @@
 
     async function switchWorkspace() {
         activeWorkspace = document.getElementById("ws-select").value;
+        currentSubFolder = "";
         document.getElementById("current-ws-label").textContent = `Проект: ${activeWorkspace.toUpperCase()}`;
         loadWorkspaceData();
     }
@@ -576,6 +698,7 @@
             body: JSON.stringify({ name: name })
         });
         activeWorkspace = name;
+        currentSubFolder = "";
         input.value = "";
         loadWorkspaces();
     }
@@ -592,6 +715,7 @@
                 body: JSON.stringify({ message: `изтрий проект ${activeWorkspace}`, workspace: activeWorkspace })
             });
             activeWorkspace = "general";
+            currentSubFolder = "";
             loadWorkspaces();
         }
     }
@@ -601,54 +725,10 @@
             await fetch("/delete_file", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ workspace: activeWorkspace, filename: filename })
+                body: JSON.stringify({ workspace: activeWorkspace, subfolder: currentSubFolder, filename: filename })
             });
             loadWorkspaceData();
         }
-    }
-
-    async function uploadFile() {
-        const fileInput = document.getElementById("file-upload");
-        if (fileInput.files.length === 0) return;
-        const formData = new FormData();
-        formData.append("file", fileInput.files[0]);
-        formData.append("workspace", activeWorkspace);
-        await fetch("/upload", { method: "POST", body: formData });
-        fileInput.value = "";
-        loadWorkspaceData();
-    }
-
-    // НОВИ ФУНКЦИИ ЗА NIKI v2.0
-    async function runCuriosityScan() {
-        const res = await fetch(`/api/v2/curiosity/scan?workspace_id=${activeWorkspace}`);
-        const data = await res.json();
-        alert("🔍 [Curiosity Engine] Открити пропуски/изолирани обекти:\n\n" + JSON.stringify(data.detected_gaps, null, 2));
-    }
-
-    async function generateTaskPlan() {
-        const goal = prompt("Въведете цел за планиране:", `Анализ на проект ${activeWorkspace.toUpperCase()}`);
-        if (!goal) return;
-        
-        const res = await fetch('/api/v2/plan', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ goal: goal })
-        });
-        const data = await res.json();
-        alert("🤖 [Planner Engine] Генериран план от агенти:\n\n" + JSON.stringify(data.plan, null, 2));
-    }
-
-    async function runSimulation() {
-        const scenario = prompt("Въведете сценарий за симулация:", "Промяна в правилата или баланса");
-        if (!scenario) return;
-        
-        const res = await fetch('/api/v2/simulate', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ workspace_id: activeWorkspace, scenario: scenario })
-        });
-        const data = await res.json();
-        alert("🧪 [Simulation Sandbox] Резултат от симулацията:\n\n" + JSON.stringify(data, null, 2));
     }
 
     document.getElementById("user-input").addEventListener("keydown", function(e) {
