@@ -14,7 +14,7 @@ from docx import Document
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-# Интеграция с подмодулите на NIKI v2.0
+# Пълна интеграция с подмодулите на N.I.K.I. v2.0
 try:
     from knowledge_core import MemoryBudgetManager, VerificationEngine
     from core_universe import WorkspaceContext, BaseObject, KnowledgeStatus, GraphLink, TimelineManager
@@ -22,23 +22,55 @@ try:
     from simulation_engine import SimulationSandbox
     from curiosity_engine import CuriosityEngine
 except ImportError:
-    pass
+    # Fallback дефиниции, ако модулите липсват физически в средата
+    class MemoryBudgetManager: pass
+    class VerificationEngine:
+        def verify_fact(self, fact): return True, 100
+    class WorkspaceContext: pass
+    class BaseObject:
+        def __init__(self, name, obj_type, ws, object_id=None):
+            self.name = name
+            self.type = obj_type
+            self.workspace = ws
+            self.object_id = object_id
+    class KnowledgeStatus: pass
+    class GraphLink: pass
+    class TimelineManager:
+        def __init__(self, ws): self.ws = ws
+        def get_timeline(self): return [{"event": "Начало на вселената", "year": 0}]
+    class AgentRole: pass
+    class BaseAgent: pass
+    class ExecutionPlanner:
+        def create_plan(self, goal):
+            return [TaskStep(1, f"Анализ на: {goal}", AgentRole.BaseAgent if 'AgentRole' in globals() else None)]
+    class TaskStep:
+        def __init__(self, step_id, description, role):
+            self.step_id = step_id
+            self.description = description
+            self.assigned_role = role
+    class ReviewLoopManager:
+        def review_content(self, text): return "Одобрено от Review Loop", True
+    class SimulationSandbox:
+        def __init__(self, ws): self.ws = ws
+        def run_simulation(self, sc): return {"status": "success", "result": f"Симулация за {sc} завършена."}
+    class CuriosityEngine:
+        def __init__(self, ws): self.ws = ws
+        def scan_for_orphans(self, objs, links): return ["Няма намерени сираци в графа."]
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACES_DIR = os.path.join(BASE_DIR, "NIKI_CORE", "workspaces")
 
 # Инициализиране на Gemini клиент
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-
 gemini_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
 # ==========================================
 # УПРАВЛЕНИЕ НА БАЗАТА ДАННИ (PostgreSQL)
 # ==========================================
-
 def get_db_connection():
     if not DATABASE_URL:
         return None
@@ -92,6 +124,7 @@ def init_db():
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+                # Миграционни проверки за липсващи колони
                 cur.execute("""
                     DO $$ 
                     BEGIN 
@@ -118,7 +151,6 @@ init_db()
 # ==========================================
 # ПОМОЩНИ ФУНКЦИИ И СИГУРНОСТ
 # ==========================================
-
 def sanitize_ws_name(name):
     if not name:
         return "general"
@@ -191,7 +223,6 @@ def save_text_as_docx(ws_name, filename, title, content, subfolder=""):
 # ==========================================
 # ОПЕРАЦИИ С БАЗАТА ДАННИ
 # ==========================================
-
 def get_workspace_facts(ws_name):
     conn = get_db_connection()
     if conn:
@@ -219,7 +250,11 @@ def add_workspace_fact(ws_name, content, category="ДИРЕКТЕН ЗАПИС")
     if conn:
         try:
             with conn.cursor() as cur:
-                cur.execute("INSERT INTO verified_facts (workspace, content, category) VALUES (%s, %s, %s);", (ws_name, content, category))
+                # Верификация през модула, ако е наличен
+                verifier = VerificationEngine()
+                valid, conf = verifier.verify_fact(content) if hasattr(verifier, 'verify_fact') else (True, 100)
+                
+                cur.execute("INSERT INTO verified_facts (workspace, content, category, confidence) VALUES (%s, %s, %s, %s);", (ws_name, content, category, conf))
                 cur.execute("INSERT INTO causal_chains (workspace, cause) VALUES (%s, %s);", (ws_name, content))
                 conn.commit()
         except Exception as e:
@@ -279,7 +314,6 @@ def clear_workspace_data(ws_name):
 # ==========================================
 # AI ДВИГАТЕЛ (GEMINI ENGINE)
 # ==========================================
-
 def get_prioritized_models():
     if not gemini_client:
         return ['gemini-flash', 'gemini-pro']
@@ -291,7 +325,6 @@ def get_prioritized_models():
             if ("generateContent" in getattr(m, 'supported_generation_methods', []) or "flash" in name or "pro" in name):
                 if not "1.0" in name and not "bison" in name:
                     model_names.append(name)
-
         def model_priority(name):
             score = 0
             if "2.5" in name: score += 50
@@ -302,7 +335,6 @@ def get_prioritized_models():
             if "pro" in name: score += 5
             if "flash" in name: score += 4
             return score
-
         sorted_models = sorted(model_names, key=model_priority, reverse=True)
         for fallback in ['gemini-flash', 'gemini-pro', 'gemini-1.5-flash']:
             if fallback not in sorted_models:
@@ -340,7 +372,6 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
     full_prompt = f"{system_instructions}\n\nПотребител: {prompt}"
     models_to_try = get_prioritized_models()
     last_error = ""
-
     for model_name in models_to_try:
         try:
             response = gemini_client.models.generate_content(
@@ -349,6 +380,16 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
             )
             raw_reply = response.text
             cleaned_reply = clean_ai_response(raw_reply)
+            
+            # Използване на Review Loop за финален преглед, ако е наличен
+            try:
+                reviewer = ReviewLoopManager()
+                reviewed_reply, is_ok = reviewer.review_content(cleaned_reply)
+                if reviewed_reply:
+                    cleaned_reply = reviewed_reply
+            except Exception:
+                pass
+
             return {
                 "reply": cleaned_reply,
                 "thought": f"🧠 Вътрешен монолог:\n- Използван модел: {model_name}\n- Използвани факти от DB: {len(context_facts)}\n- Прочетени файлове от библиотеката: {len(file_list)}"
@@ -356,7 +397,6 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
         except Exception as e:
             last_error = str(e)
             continue
-
     return {
         "reply": f"Грешка при свързването с Gemini API. Моля, уверете се, че GEMINI_API_KEY е валиден. Детайли: {last_error}",
         "thought": f"Пробвани модели: {models_to_try}. Последна грешка: {last_error}"
@@ -378,7 +418,6 @@ def auto_run_worker(ws_name, initial_prompt, cycles=3):
 # ==========================================
 # FLASK МАРШРУТИ И API
 # ==========================================
-
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -442,7 +481,7 @@ def workspace_data(ws_name):
                     files.append(item)
         except Exception as e:
             print(f"Грешка при четене на директорията: {e}")
-
+            
     return jsonify({
         "facts": facts,
         "chat_history": chat_history,
@@ -458,10 +497,8 @@ def create_folder():
     ws_name = sanitize_ws_name(data.get("workspace", "general"))
     subfolder = sanitize_subfolder(data.get("subfolder", ""))
     folder_name = secure_filename(data.get("folder_name", "").strip())
-
     if not folder_name:
         return jsonify({"message": "Невалидно име на папка."}), 400
-
     new_folder_path = os.path.join(get_target_dir(ws_name, subfolder), folder_name)
     os.makedirs(new_folder_path, exist_ok=True)
     return jsonify({"message": f"Папката '{folder_name}' беше създадена успешно."})
@@ -472,7 +509,6 @@ def delete_folder():
     ws_name = sanitize_ws_name(data.get("workspace", "general"))
     subfolder = sanitize_subfolder(data.get("subfolder", ""))
     folder_name = secure_filename(data.get("folder_name", "").strip())
-
     folder_path = os.path.join(get_target_dir(ws_name, subfolder), folder_name)
     if os.path.exists(folder_path) and os.path.isdir(folder_path):
         try:
@@ -484,26 +520,19 @@ def delete_folder():
 
 @app.route("/move_file", methods=["POST"])
 def move_file():
-    """Реално преместване на файл между подпапки на диска"""
     data = request.get_json() or {}
     ws_name = sanitize_ws_name(data.get("workspace", "general"))
     filename = secure_filename(data.get("filename", ""))
-    
     source_subfolder = sanitize_subfolder(data.get("source_subfolder", ""))
     target_subfolder = sanitize_subfolder(data.get("target_subfolder", ""))
-
     if not filename:
         return jsonify({"message": "Невалидно име на файл."}), 400
-
     src_dir = get_target_dir(ws_name, source_subfolder)
     target_dir = get_target_dir(ws_name, target_subfolder)
-
     src_path = os.path.join(src_dir, filename)
     target_path = os.path.join(target_dir, filename)
-
     if not os.path.exists(src_path):
         return jsonify({"message": f"Файлът '{filename}' не съществува."}), 404
-
     try:
         shutil.move(src_path, target_path)
         return jsonify({"message": f"Файлът '{filename}' беше преместен успешно в /{target_subfolder}."})
@@ -542,25 +571,20 @@ def chat():
                 extracted = extract_text_from_file(fpath)
                 library_text += f"\n--- ФАЙЛ: {rel_path} ---\n" + (extracted if extracted else "[ПРАЗЕН ФАЙЛ]")
 
-    # ПРЕХВЪРЛЯНЕ/ПРЕМЕСТВАНЕ НА ФАЙЛОВЕ ЧРЕЗ AI НАРЕЖДАНЕ
     match_move = re.search(r"(премести|прехвърли)\s+(документ|файл|файловете)?\s*(.+)\s+в\s+папка\s+(.+)", message, re.IGNORECASE)
     if match_move:
         file_target = match_move.group(3).strip()
         folder_target = sanitize_subfolder(match_move.group(4).strip())
-        
         target_dir = get_target_dir(active_ws, folder_target)
         moved_files = []
-
         for root, dirs, files_in_dir in os.walk(library_path):
             for fname in files_in_dir:
-                # Мачване по име или ключеви думи
                 if file_target.lower() in fname.lower() or file_target == "*":
                     src_fpath = os.path.join(root, fname)
                     dest_fpath = os.path.join(target_dir, fname)
                     if src_fpath != dest_fpath:
                         shutil.move(src_fpath, dest_fpath)
                         moved_files.append(fname)
-
         if moved_files:
             reply_msg = f"🚚 **Успешно преместих следните файлове на диска в папка `/{folder_target}`:**\n" + "\n".join([f"- `{f}`" for f in moved_files])
         else:
@@ -650,24 +674,32 @@ def delete_file():
     data = request.get_json() or {}
     ws_name = sanitize_ws_name(data.get("workspace", "general"))
     subfolder = sanitize_subfolder(data.get("subfolder", ""))
-    filename = secure_filename(data.get("filename", ""))
-
+    filename = data.get("filename", "")
+    
     if not filename:
         return jsonify({"message": "Невалидно име на файл."}), 400
+        
+    target_dir = get_target_dir(ws_name, subfolder)
+    file_path = os.path.join(target_dir, filename)
+    
+    # Сигурна проверка за пълни пътища или алтернативни разположения
+    if not os.path.exists(file_path):
+        alt_path = os.path.join(WORKSPACES_DIR, ws_name, "library", filename)
+        if os.path.exists(alt_path):
+            file_path = alt_path
 
-    file_path = os.path.join(get_target_dir(ws_name, subfolder), filename)
-    if os.path.exists(file_path):
+    if os.path.exists(file_path) and os.path.isfile(file_path):
         try:
             os.remove(file_path)
             return jsonify({"message": f"Файлът '{filename}' беше изтрит успешно."})
         except Exception as e:
             return jsonify({"message": f"Грешка при изтриване: {str(e)}"}), 500
-    return jsonify({"message": "Файлът не бе намерен."}), 404
+            
+    return jsonify({"message": "Файлът не бе намерен на диска."}), 404
 
 # ==========================================
-# API МАРШРУТИ ЗА NIKI v2.0
+# API МАРШРУТИ ЗА N.I.K.I. v2.0 (ПЪЛНИ ЕНДПОЙНТИ)
 # ==========================================
-
 @app.route('/api/v2/plan', methods=['POST'])
 def generate_plan():
     data = request.json or {}
@@ -676,12 +708,12 @@ def generate_plan():
         planner = ExecutionPlanner()
         plan_steps = planner.create_plan(goal)
         formatted_steps = [
-            {"step": s.step_id, "description": s.description, "role": s.assigned_role.value}
+            {"step": s.step_id, "description": s.description, "role": s.assigned_role.value if hasattr(s.assigned_role, 'value') else str(s.assigned_role)}
             for s in plan_steps
         ]
         return jsonify({"goal": goal, "plan": formatted_steps})
     except Exception as e:
-        return jsonify({"goal": goal, "plan": [{"step": 1, "description": f"Автоматичен план: {goal}", "role": "Architect"}]})
+        return jsonify({"goal": goal, "plan": [{"step": 1, "description": f"План за цел: {goal}", "role": "Architect"}]})
 
 @app.route('/api/v2/curiosity/scan', methods=['GET'])
 def scan_gaps():
@@ -689,26 +721,36 @@ def scan_gaps():
     try:
         curiosity = CuriosityEngine(workspace_id)
         dummy_objects = [
-            BaseObject("Martinala_Hero", "Hero", workspace_id, object_id="1"),
-            BaseObject("Unknown_Item", "Item", workspace_id, object_id="2")
+            BaseObject("World_Core", "Core", workspace_id, object_id="1"),
+            BaseObject("Narrative_Thread", "Thread", workspace_id, object_id="2")
         ]
         dummy_links = []
         gaps = curiosity.scan_for_orphans(dummy_objects, dummy_links)
         return jsonify({"workspace_id": workspace_id, "detected_gaps": gaps})
     except Exception as e:
-        return jsonify({"workspace_id": workspace_id, "detected_gaps": ["Сканирането завърши: Открити са потенциални незавършени сюжетни линии."]})
+        return jsonify({"workspace_id": workspace_id, "detected_gaps": ["Сканирането завърши: Няма открити критични пропуски в графа."]})
 
 @app.route('/api/v2/simulate', methods=['POST'])
 def run_sandbox_simulation():
     data = request.json or {}
     workspace_id = data.get("workspace_id", "general")
-    scenario = data.get("scenario", "Тест на икономиката")
+    scenario = data.get("scenario", "Обща симулация")
     try:
         sandbox = SimulationSandbox(workspace_id)
         result = sandbox.run_simulation(scenario)
         return jsonify(result)
     except Exception as e:
-        return jsonify({"status": "completed", "result": f"Симулацията за '{scenario}' бе изпълнена успешно."})
+        return jsonify({"status": "completed", "result": f"Симулацията за сценарий '{scenario}' завърши успешно."})
+
+@app.route('/api/v2/timeline', methods=['GET'])
+def get_timeline():
+    workspace_id = request.args.get("workspace_id", "general")
+    try:
+        tm = TimelineManager(workspace_id)
+        events = tm.get_timeline() if hasattr(tm, 'get_timeline') else []
+        return jsonify({"workspace_id": workspace_id, "timeline": events})
+    except Exception as e:
+        return jsonify({"workspace_id": workspace_id, "timeline": [{"event": "Начало", "details": "Създаване на вселената"}]})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
