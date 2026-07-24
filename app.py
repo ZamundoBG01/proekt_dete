@@ -22,7 +22,6 @@ try:
     from simulation_engine import SimulationSandbox
     from curiosity_engine import CuriosityEngine
 except ImportError:
-    # Защита в случай че някои локални модули липсват при старт
     pass
 
 app = Flask(__name__)
@@ -30,7 +29,7 @@ app.json.ensure_ascii = False
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACES_DIR = os.path.join(BASE_DIR, "NIKI_CORE", "workspaces")
 
-# Инициализиране на Gemini клиент с API ключ от Render / Environment
+# Инициализиране на Gemini клиент
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -128,7 +127,6 @@ def sanitize_ws_name(name):
 def sanitize_subfolder(subfolder_path):
     if not subfolder_path:
         return ""
-    # Премахва опасни елементи като '..'
     clean_parts = [secure_filename(part) for part in subfolder_path.replace('\\', '/').split('/') if part and part != '..']
     return "/".join(clean_parts)
 
@@ -482,7 +480,35 @@ def delete_folder():
             return jsonify({"message": f"Папката '{folder_name}' беше изтрита успешно."})
         except Exception as e:
             return jsonify({"message": f"Грешка при изтриване: {str(e)}"}), 500
-    return jsonify({"message": "Папката не бе намерена."}), 404
+    return jsonify({"message": "Папката не бе намеренa."}), 404
+
+@app.route("/move_file", methods=["POST"])
+def move_file():
+    """Реално преместване на файл между подпапки на диска"""
+    data = request.get_json() or {}
+    ws_name = sanitize_ws_name(data.get("workspace", "general"))
+    filename = secure_filename(data.get("filename", ""))
+    
+    source_subfolder = sanitize_subfolder(data.get("source_subfolder", ""))
+    target_subfolder = sanitize_subfolder(data.get("target_subfolder", ""))
+
+    if not filename:
+        return jsonify({"message": "Невалидно име на файл."}), 400
+
+    src_dir = get_target_dir(ws_name, source_subfolder)
+    target_dir = get_target_dir(ws_name, target_subfolder)
+
+    src_path = os.path.join(src_dir, filename)
+    target_path = os.path.join(target_dir, filename)
+
+    if not os.path.exists(src_path):
+        return jsonify({"message": f"Файлът '{filename}' не съществува."}), 404
+
+    try:
+        shutil.move(src_path, target_path)
+        return jsonify({"message": f"Файлът '{filename}' беше преместен успешно в /{target_subfolder}."})
+    except Exception as e:
+        return jsonify({"message": f"Грешка при преместване: {str(e)}"}), 500
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -515,6 +541,33 @@ def chat():
                 file_list.append(rel_path)
                 extracted = extract_text_from_file(fpath)
                 library_text += f"\n--- ФАЙЛ: {rel_path} ---\n" + (extracted if extracted else "[ПРАЗЕН ФАЙЛ]")
+
+    # ПРЕХВЪРЛЯНЕ/ПРЕМЕСТВАНЕ НА ФАЙЛОВЕ ЧРЕЗ AI НАРЕЖДАНЕ
+    match_move = re.search(r"(премести|прехвърли)\s+(документ|файл|файловете)?\s*(.+)\s+в\s+папка\s+(.+)", message, re.IGNORECASE)
+    if match_move:
+        file_target = match_move.group(3).strip()
+        folder_target = sanitize_subfolder(match_move.group(4).strip())
+        
+        target_dir = get_target_dir(active_ws, folder_target)
+        moved_files = []
+
+        for root, dirs, files_in_dir in os.walk(library_path):
+            for fname in files_in_dir:
+                # Мачване по име или ключеви думи
+                if file_target.lower() in fname.lower() or file_target == "*":
+                    src_fpath = os.path.join(root, fname)
+                    dest_fpath = os.path.join(target_dir, fname)
+                    if src_fpath != dest_fpath:
+                        shutil.move(src_fpath, dest_fpath)
+                        moved_files.append(fname)
+
+        if moved_files:
+            reply_msg = f"🚚 **Успешно преместих следните файлове на диска в папка `/{folder_target}`:**\n" + "\n".join([f"- `{f}`" for f in moved_files])
+        else:
+            reply_msg = f"⚠️ Не открих файлове, съвпадащи с '{file_target}', за да ги преместя в `/{folder_target}`."
+            
+        save_chat_message(active_ws, "niki", reply_msg, f"Преместване на файлове: {moved_files}")
+        return jsonify({"reply": reply_msg, "monologue": "Изпълнено реално преместване на файлове."})
 
     match_del = re.match(r"^(изтрий|премахни)(\s+проект|\s+директория)?\s+(.+)$", message, re.IGNORECASE)
     if match_del:
