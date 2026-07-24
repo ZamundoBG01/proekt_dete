@@ -33,7 +33,6 @@
             overflow: hidden;
         }
 
-        /* ОСНОВЕН ЛЕЙАУТ */
         .app-container {
             display: flex;
             width: 100vw;
@@ -46,6 +45,17 @@
             flex-direction: column;
             border-right: 1px solid var(--border-color);
             height: 100%;
+            transition: all 0.3s ease;
+        }
+
+        .main-chat-area.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 9999;
+            background-color: var(--bg-color);
         }
 
         .sidebar {
@@ -56,6 +66,10 @@
             gap: 15px;
             padding: 15px;
             overflow-y: auto;
+        }
+
+        .main-chat-area.fullscreen + .sidebar {
+            display: none;
         }
 
         /* ШАПКА НА ЧАТА */
@@ -76,6 +90,12 @@
             gap: 10px;
         }
 
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
         .project-badge {
             font-size: 0.85rem;
             background: rgba(0, 132, 255, 0.2);
@@ -83,6 +103,20 @@
             padding: 4px 8px;
             border-radius: 4px;
             border: 1px solid var(--accent-blue);
+        }
+
+        .btn-fullscreen {
+            background: #2b364e;
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .btn-fullscreen:hover {
+            background: var(--accent-blue);
+            color: white;
         }
 
         /* ЗОНА С СЪОБЩЕНИЯ */
@@ -144,7 +178,7 @@
             align-self: flex-end;
         }
 
-        /* ФУТЪР / ИНПУТ ЗОНА */
+        /* ФУТЪР / ИНПУТ ЗОНА (С ДИНАМИЧНО РАЗТЯГАНЕ) */
         .input-container {
             padding: 15px;
             background-color: var(--panel-bg);
@@ -181,6 +215,7 @@
         .input-wrapper {
             display: flex;
             gap: 10px;
+            align-items: flex-end;
         }
 
         textarea {
@@ -191,8 +226,11 @@
             padding: 10px;
             border-radius: 8px;
             resize: none;
-            height: 50px;
+            min-height: 80px; /* Започва на около 3-4 реда */
+            max-height: 200px;
             outline: none;
+            overflow-y: auto;
+            line-height: 1.4;
         }
 
         textarea:focus { border-color: var(--accent-blue); }
@@ -201,10 +239,11 @@
             background: var(--accent-green);
             color: white;
             border: none;
-            padding: 0 20px;
+            padding: 10px 20px;
             border-radius: 8px;
             font-weight: bold;
             cursor: pointer;
+            height: 42px;
             transition: background 0.2s;
         }
 
@@ -311,10 +350,13 @@
 
 <div class="app-container">
     <!-- ОСНОВЕН ЧАТ -->
-    <div class="main-chat-area">
+    <div class="main-chat-area" id="main-chat-area">
         <div class="chat-header">
             <h1>N.I.K.I. (Neural Intelligent Knowledge Integrator)</h1>
-            <span class="project-badge" id="current-project-title">Проект: GENERAL</span>
+            <div class="header-actions">
+                <span class="project-badge" id="current-project-title">Проект: GENERAL</span>
+                <button class="btn-fullscreen" onclick="toggleFullscreen()" title="Цял екран">⛶</button>
+            </div>
         </div>
 
         <div class="messages-container" id="chat-messages">
@@ -329,7 +371,7 @@
             </div>
             
             <div class="input-wrapper">
-                <textarea id="message-input" placeholder="Напиши инструкция тук... (Enter за изпращане, Shift+Enter за нов ред)"></textarea>
+                <textarea id="message-input" placeholder="Напиши инструкция тук... (Enter за изпращане, Shift+Enter за нов ред)" oninput="autoResizeTextarea(this)"></textarea>
                 <button class="btn-send" id="send-btn" onclick="sendMessage()">Изпрати</button>
             </div>
 
@@ -402,13 +444,26 @@
         loadWorkspaces();
         loadWorkspaceData(currentWorkspace);
 
-        document.getElementById("message-input").addEventListener("keydown", function(e) {
+        const msgInput = document.getElementById("message-input");
+        msgInput.addEventListener("keydown", function(e) {
             if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 sendMessage();
             }
         });
     });
+
+    // Динамично разтягане на полето за писане нагоре
+    function autoResizeTextarea(textarea) {
+        textarea.style.height = 'auto';
+        textarea.style.height = (textarea.scrollHeight) + 'px';
+    }
+
+    // Бутон за цял екран
+    function toggleFullscreen() {
+        const chatArea = document.getElementById("main-chat-area");
+        chatArea.classList.toggle("fullscreen");
+    }
 
     // --- УПРАВЛЕНИЕ НА ПРОЕКТИ ---
     function loadWorkspaces() {
@@ -472,7 +527,7 @@
         });
     }
 
-    // --- ЗАРЕЖДАНЕ НА ДАННИ (ФАЙЛОВЕ, ПАПКИ, ФАКТИ, ЧАТ) ---
+    // --- ЗАРЕЖДАНЕ НА ДАННИ ---
     function loadWorkspaceData(wsName, subfolder = "") {
         currentSubfolder = subfolder;
         document.getElementById("current-path-text").textContent = "Path: /" + (subfolder ? subfolder : "Root");
@@ -487,7 +542,7 @@
             });
     }
 
-    // --- УПРАВЛЕНИЕ НА ПАПКИ И ФАЙЛОВЕ ---
+    // --- ФАЙЛОВЕ И ПАПКИ ---
     function renderFilesAndFolders(folders, files) {
         const ul = document.getElementById("file-list-ul");
         ul.innerHTML = "";
@@ -497,7 +552,6 @@
             return;
         }
 
-        // Папки
         folders.forEach(folder => {
             const li = document.createElement("li");
             li.className = "item-row";
@@ -510,16 +564,19 @@
             ul.appendChild(li);
         });
 
-        // Файлове
         files.forEach(file => {
             const li = document.createElement("li");
             li.className = "item-row";
             const downloadUrl = `/download/${currentWorkspace}/${currentSubfolder ? currentSubfolder + '/' : ''}${file}`;
+            
+            // Защита на имената на файловете с кавички в JS извикванията
+            const safeFile = file.replace(/'/g, "\\'");
+            
             li.innerHTML = `
                 <a href="${downloadUrl}" class="file-item" target="_blank" title="${file}">📄 ${file}</a>
                 <div class="item-actions">
-                    <button class="btn-sm btn-primary" onclick="moveFileModal('${file}')" title="Премести файл">🚚 Премести</button>
-                    <button class="btn-sm btn-danger" onclick="deleteFile('${file}')" title="Изтрий файл">🗑️</button>
+                    <button class="btn-sm btn-primary" onclick="moveFileModal('${safeFile}')" title="Премести файл">🚚 Премести</button>
+                    <button class="btn-sm btn-danger" onclick="deleteFile('${safeFile}')" title="Изтрий файл">🗑️</button>
                 </div>
             `;
             ul.appendChild(li);
@@ -577,11 +634,9 @@
         });
     }
 
-    // --- ПРЕМЕСТВАНЕ НА ФАЙЛ (МОДАЛЕН БУТОН) ---
     function moveFileModal(filename) {
         let targetFolder = prompt(`В коя папка да преместя "${filename}"?\n\n(Остави празно за коренната папка /Root, или въведи име на папка, напр: OLD):`, "OLD");
-        
-        if (targetFolder === null) return; // Отказано от потребителя
+        if (targetFolder === null) return;
 
         fetch('/move_file', {
             method: 'POST',
@@ -699,6 +754,7 @@
 
         const autoRun = document.getElementById("auto-run-check").checked;
         input.value = "";
+        input.style.height = '80px'; // Връщаме начална височина след изпращане
 
         fetch('/chat', {
             method: 'POST',
@@ -716,7 +772,9 @@
     }
 
     function sendQuickPrompt(promptText) {
-        document.getElementById("message-input").value = promptText;
+        const input = document.getElementById("message-input");
+        input.value = promptText;
+        autoResizeTextarea(input);
         sendMessage();
     }
 
