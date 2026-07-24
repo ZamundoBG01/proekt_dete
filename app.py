@@ -246,45 +246,48 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
             "reply": f"Обработена инструкция: {prompt}",
             "thought": "Липсва GEMINI_API_KEY в системните променливи."
         }
-    try:
-        files_str = ", ".join(file_list) if file_list else "Няма качени файлове"
-        system_instructions = f"""
-        Ти си N.I.K.I. - главен архитект на светове, физични и биологични симулации ("Ефекта на пеперудата") за писатели, сценаристи и гейм-разработчици.
-        СПИСЪК НА ФАЙЛОВЕ В БИБЛИОТЕКАТА:
-        [{files_str}]
-        ПРОВЕРЕНИ ФАКТИ И ПРАВИЛА В ТОЗИ ПРОЕКТ/СВЯТ:
-        {json.dumps(context_facts, ensure_ascii=False)}
-        СЪДЪРЖАНИЕ НА БИБЛИОТЕКАТА:
-        {library_context[:6000] if library_context else 'Няма допълнителен текст.'}
-        ПРАВИЛА ЗА РАБОТА:
-        1. За светове, планети и същества: Базирай анатомията, климата и еволюцията на РЕАЛНИ ФИЗИЧНИ И БИОЛОГИЧНИ ЗАКОНИ (гравитация, атмосфера, радиация), освен ако потребителят не дефинира магически правила.
-        2. Избягвай клишета! Генерирай уникални имена, езици, традиции и архитектура.
-        3. Когато провеждаш АНАЛИЗ или СИМУЛАЦИЯ на промяна ("Ефекта на пеперудата"):
-           - **Секция 1: 🔒 ТВЪРДА ДЕТЕРМИНИРАНА ВЕРИГА (Неизбежни преки последици)**
-           - **Секция 2: 🎲 СИМУЛАЦИЯ НА 10 ВАРИАНТА (Спонтанни вторични променливи)**
-        4. Отговаряй ВИНАГИ на чист и правилен български език.
-        """
+    
+    files_str = ", ".join(file_list) if file_list else "Няма качени файлове"
+    system_instructions = f"""
+    Ти си N.I.K.I. - главен архитект на светове, физични и биологични симулации ("Ефекта на пеперудата") за писатели, сценаристи и гейм-разработчици.
+    СПИСЪК НА ФАЙЛОВЕ В БИБЛИОТЕКАТА:
+    [{files_str}]
+    ПРОВЕРЕНИ ФАКТИ И ПРАВИЛА В ТОЗИ ПРОЕКТ/СВЯТ:
+    {json.dumps(context_facts, ensure_ascii=False)}
+    СЪДЪРЖАНИЕ НА БИБЛИОТЕКАТА:
+    {library_context[:6000] if library_context else 'Няма допълнителен текст.'}
+    ПРАВИЛА ЗА РАБОТА:
+    1. За светове, планети и същества: Базирай анатомията, климата и еволюцията на РЕАЛНИ ФИЗИЧНИ И БИОЛОГИЧНИ ЗАКОНИ (гравитация, атмосфера, радиация), освен ако потребителят не дефинира магически правила.
+    2. Избягвай клишета! Генерирай уникални имена, езици, традиции и архитектура.
+    3. Когато провеждаш АНАЛИЗ или СИМУЛАЦИЯ на промяна ("Ефекта на пеперудата"):
+       - **Секция 1: 🔒 ТВЪРДА ДЕТЕРМИНИРАНА ВЕРИГА (Неизбежни преки последици)**
+       - **Секция 2: 🎲 СИМУЛАЦИЯ НА 10 ВАРИАНТА (Спонтанни вторични променливи)**
+    4. Отговаряй ВИНАГИ на чист и правилен български език.
+    """
+    
+    full_prompt = f"{system_instructions}\n\nПотребител: {prompt}"
+
+    # Auto-Retry защита за справяне с грешка 503 UNAVAILABLE
+    for attempt in range(3):
         try:
             response = gemini_client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=f"{system_instructions}\n\nПотребител: {prompt}"
+                model='gemini-1.5-flash',
+                contents=full_prompt
             )
-        except Exception:
-            response = gemini_client.models.generate_content(
-                model='gemini-3.5-flash',
-                contents=f"{system_instructions}\n\nПотребител: {prompt}"
-            )
-        raw_reply = response.text
-        cleaned_reply = clean_ai_response(raw_reply)
-        return {
-            "reply": cleaned_reply,
-            "thought": f"🧠 Вътрешен монолог / Анализ:\n- Използвани факти от DB: {len(context_facts)}\n- Прочетени файлове от библиотеката: {len(file_list)}\n- AI Модел: Google Gemini 2.5 Flash"
-        }
-    except Exception as e:
-        return {
-            "reply": f"Грешка при комуникация с AI модела: {str(e)}",
-            "thought": f"Грешка: {str(e)}"
-        }
+            raw_reply = response.text
+            cleaned_reply = clean_ai_response(raw_reply)
+            return {
+                "reply": cleaned_reply,
+                "thought": f"🧠 Вътрешен монолог / Анализ:\n- Използвани факти от DB: {len(context_facts)}\n- Прочетени файлове от библиотеката: {len(file_list)}\n- AI Модел: Google Gemini 1.5 Flash (Успешен опит {attempt+1})"
+            }
+        except Exception as e:
+            if ("503" in str(e) or "UNAVAILABLE" in str(e)) and attempt < 2:
+                time.sleep(1.5)  # Изчаква 1.5 секунди при претоварване
+                continue
+            return {
+                "reply": f"Грешка при комуникация с AI модела: {str(e)}",
+                "thought": f"Грешка: {str(e)}"
+            }
 
 def auto_run_worker(ws_name, initial_prompt, cycles=3):
     print(f"🚀 Стартиран Auto-Run за проект '{ws_name}' с {cycles} цикъла.")
@@ -472,8 +475,6 @@ def delete_file():
             return jsonify({"message": f"Грешка при изтриване: {str(e)}"}), 500
     return jsonify({"message": "Файлът не бе намерен."}), 404
 
-# ... тук ти свършва досегашният код ...
-
 # ==========================================
 # НОВИ API МАРШРУТИ ЗА NIKI v2.0
 # ==========================================
@@ -490,7 +491,6 @@ def generate_plan():
     ]
     return jsonify({"goal": goal, "plan": formatted_steps})
 
-
 @app.route('/api/v2/curiosity/scan', methods=['GET'])
 def scan_gaps():
     workspace_id = request.args.get("workspace_id", "general")
@@ -502,7 +502,6 @@ def scan_gaps():
     dummy_links = []
     gaps = curiosity.scan_for_orphans(dummy_objects, dummy_links)
     return jsonify({"workspace_id": workspace_id, "detected_gaps": gaps})
-
 
 @app.route('/api/v2/simulate', methods=['POST'])
 def run_sandbox_simulation():
@@ -524,42 +523,29 @@ def upload_file_v2():
         return jsonify({"error": "No file provided"}), 400
         
     file = request.files['file']
-    workspace = request.form.get("workspace", "general")
+    workspace = sanitize_ws_name(request.form.get("workspace", "general"))
     
     if file.filename == '':
         return jsonify({"error": "Empty filename"}), 400
 
-    ws_dir = os.path.join(WORKSPACE_DIR, workspace)
-    os.makedirs(ws_dir, exist_ok=True)
-    filepath = os.path.join(ws_dir, file.filename)
+    library_path = os.path.join(WORKSPACES_DIR, workspace, "library")
+    os.makedirs(library_path, exist_ok=True)
+    filepath = os.path.join(library_path, file.filename)
     file.save(filepath)
 
-    extracted_text = ""
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            extracted_text = f.read()
-    except Exception:
+    extracted_text = extract_text_from_file(filepath)
+    if not extracted_text:
         extracted_text = f"Файл {file.filename} беше качен успешно."
 
-    kc = KnowledgeCore(workspace)
-    fact_entry = f"Документ '{file.filename}': {extracted_text[:150]}..."
-    kc.add_fact(fact_entry)
+    fact_entry = f"📄 Качен документ '{file.filename}': {extracted_text[:150]}..."
+    add_workspace_fact(workspace, fact_entry, category="ДОКУМЕНТ")
 
-    data = load_workspace_data(workspace)
-    data["facts"].append({"content": f"📄 Качен документ: {file.filename}"})
+    reply_msg = f"🤖 Анализирах новия файл '{file.filename}'! Данните са обработени в Knowledge Core. Кликни '🔍 Сканирай за пропуски', за да видиш дали има неясни връзки."
+    monologue = f"Файлът {file.filename} е обработен. Дължина на съдържанието: {len(extracted_text)} знака."
     
-    curiosity = CuriosityEngine(workspace)
-    data["chat_history"].append({
-        "sender": "niki",
-        "message": f"🤖 Анализирах новия файл '{file.filename}'! Данните са обработени в Knowledge Core. Кликни '🔍 Сканирай за пропуски', за да видиш дали има неясни връзки.",
-        "monologue": f"Файлът {file.filename} е обработен. Дължина на съдържанието: {len(extracted_text)} знака.",
-        "timestamp": ""
-    })
-    
-    save_workspace_data(workspace, data)
+    save_chat_message(workspace, "niki", reply_msg, monologue)
     return jsonify({"status": "success", "filename": file.filename})
 
-# СЪЩЕСТВУВАЩИЯТ СТАРТИРАЩ РЕД НА СЪРВЪРА (НАЙ-ОТДОЛУ):
+# СТАРТИРАЩ РЕД НА СЪРВЪРА:
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
-    
