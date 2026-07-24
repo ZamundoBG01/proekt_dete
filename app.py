@@ -267,27 +267,36 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
     
     full_prompt = f"{system_instructions}\n\nПотребител: {prompt}"
 
-    # Auto-Retry защита за справяне с грешка 503 UNAVAILABLE
-    for attempt in range(3):
-        try:
-            response = gemini_client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=full_prompt
-            )
-            raw_reply = response.text
-            cleaned_reply = clean_ai_response(raw_reply)
-            return {
-                "reply": cleaned_reply,
-                "thought": f"🧠 Вътрешен монолог / Анализ:\n- Използвани факти от DB: {len(context_facts)}\n- Прочетени файлове от библиотеката: {len(file_list)}\n- AI Модел: Google Gemini 1.5 Flash (Успешен опит {attempt+1})"
-            }
-        except Exception as e:
-            if ("503" in str(e) or "UNAVAILABLE" in str(e)) and attempt < 2:
-                time.sleep(1.5)  # Изчаква 1.5 секунди при претоварване
-                continue
-            return {
-                "reply": f"Грешка при комуникация с AI модела: {str(e)}",
-                "thought": f"Грешка: {str(e)}"
-            }
+    # Списък с актуални модели за автоматично превключване
+    models_to_try = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+
+    for model_name in models_to_try:
+        for attempt in range(2):
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=full_prompt
+                )
+                raw_reply = response.text
+                cleaned_reply = clean_ai_response(raw_reply)
+                return {
+                    "reply": cleaned_reply,
+                    "thought": f"🧠 Вътрешен монолог / Анализ:\n- Използвани факти от DB: {len(context_facts)}\n- Прочетени файлове от библиотеката: {len(file_list)}\n- Успешно използван AI Модел: {model_name}"
+                }
+            except Exception as e:
+                err_str = str(e)
+                # При 404 (моделът не съществува в тази версия/регион) отиваме на следващия
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    break
+                # При 503 (претоварване) изчакваме и пробваме пак с същия
+                if ("503" in err_str or "UNAVAILABLE" in err_str) and attempt < 1:
+                    time.sleep(1.5)
+                    continue
+
+    return {
+        "reply": "В момента има проблем със свързването към Gemini API. Моля, проверете API ключа си.",
+        "thought": "Всички налични Gemini модели върнаха грешка."
+    }
 
 def auto_run_worker(ws_name, initial_prompt, cycles=3):
     print(f"🚀 Стартиран Auto-Run за проект '{ws_name}' с {cycles} цикъла.")
@@ -476,7 +485,7 @@ def delete_file():
     return jsonify({"message": "Файлът не бе намерен."}), 404
 
 # ==========================================
-# НОВИ API МАРШРУТИ ЗА NIKI v2.0
+# API МАРШРУТИ ЗА NIKI v2.0
 # ==========================================
 
 @app.route('/api/v2/plan', methods=['POST'])
@@ -512,13 +521,8 @@ def run_sandbox_simulation():
     result = sandbox.run_simulation(scenario)
     return jsonify(result)
 
-# ==========================================
-# ОБНОВЕНО КАЧВАНЕ НА ФАЙЛОВЕ ЗА NIKI v2.0
-# ==========================================
-
 @app.route('/upload_v2', methods=['POST'])
 def upload_file_v2():
-    """Качване на файл + Автоматичен анализ от Knowledge Core & Curiosity Engine"""
     if 'file' not in request.files:
         return jsonify({"error": "No file provided"}), 400
         
@@ -546,6 +550,5 @@ def upload_file_v2():
     save_chat_message(workspace, "niki", reply_msg, monologue)
     return jsonify({"status": "success", "filename": file.filename})
 
-# СТАРТИРАЩ РЕД НА СЪРВЪРА:
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
