@@ -7,3 +7,4 @@ scikit-learn
 numpy
 requests
 psycopg2-binary
+google-genai
