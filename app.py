@@ -259,8 +259,8 @@ def call_ai_engine(prompt, context_facts=[], file_list=[], library_context=""):
         4. Отговаряй ВИНАГИ на чист и правилен български език.
         """
         response = gemini_client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=f"{system_instructions}\n\nПотребител: {prompt}"
+        model='gemini-2.5-flash',
+        contents=f"{system_instructions}\n\nПотребител: {prompt}"
         )
         raw_reply = response.text
         cleaned_reply = clean_ai_response(raw_reply)
