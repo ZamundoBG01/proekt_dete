@@ -19,6 +19,7 @@ from simulation_engine import SimulationSandbox
 from curiosity_engine import CuriosityEngine
 
 app = Flask(__name__)
+app.json.ensure_ascii = False
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACES_DIR = os.path.join(BASE_DIR, "NIKI_CORE", "workspaces")
 
