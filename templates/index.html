@@ -66,9 +66,9 @@
             font-weight: bold;
             border: 3px dashed #ffffff;
             border-radius: 8px;
+            pointer-events: none;
         }
-        .chat-section.drag-over .drag-overlay,
-        .panel-file-zone.drag-over .drag-overlay {
+        .chat-section.drag-over .drag-overlay {
             display: flex;
         }
 
@@ -259,7 +259,7 @@
             margin-bottom: 8px;
             display: flex;
             align-items: center;
-            gap: 5px;
+            justify-content: space-between;
             word-break: break-all;
         }
         .file-item, .folder-item {
@@ -270,15 +270,22 @@
             border-bottom: 1px solid var(--border-color);
             font-size: 0.85rem;
             border-radius: 4px;
+            margin-bottom: 2px;
         }
         .folder-item {
             background-color: #1c2128;
-            cursor: pointer;
             color: #f0f6fc;
             font-weight: 500;
         }
         .folder-item:hover {
             background-color: #2d333b;
+        }
+        .folder-name-btn {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex: 1;
         }
         .file-item a {
             color: var(--accent-blue);
@@ -300,7 +307,7 @@
         .folder-controls {
             display: flex;
             gap: 5px;
-            margin-top: 8px;
+            margin-top: 10px;
         }
         .dots::after {
             content: '';
@@ -364,19 +371,20 @@
         </div>
 
         <!-- ФАЙЛОВА СИСТЕМА С ПОДПАПКИ И DRAG & DROP -->
-        <div class="panel panel-file-zone" id="file-panel">
+        <div class="panel" id="file-panel">
             <h3 style="cursor: default;">📚 Библиотека & Файлове</h3>
             
             <!-- Хлебни трохи (Breadcrumbs) за навигация -->
             <div class="path-breadcrumbs" id="path-breadcrumbs">
-                <span>Path: /</span>
+                <span id="path-text">Path: /</span>
+                <button id="btn-up" onclick="navigateUp()" style="display:none; padding: 2px 6px; font-size: 0.75rem; background:#30363d; border:1px solid var(--border-color); color:#fff; border-radius:4px; cursor:pointer;">⬅️ Назад</button>
             </div>
 
-            <div id="file-list"></div>
+            <div id="file-list" style="max-height: 200px; overflow-y: auto;"></div>
 
             <!-- Контроли за създаване на подпапка и качване -->
             <div class="folder-controls">
-                <input type="text" id="new-folder-name" placeholder="Нова подпапка...">
+                <input type="text" id="new-folder-name" placeholder="Име на папка...">
                 <button onclick="createFolder()" style="padding: 6px 10px; background-color: #21262d; border: 1px solid var(--border-color);">📁 +</button>
             </div>
 
@@ -400,7 +408,7 @@
 
 <script>
     let activeWorkspace = "general";
-    let currentSubFolder = ""; // Пази текущата подпапка
+    let currentSubFolder = "";
     let factsExpanded = true;
     let thinkingTimer = null;
     let thinkingSeconds = 0;
@@ -420,87 +428,95 @@
     }
 
     async function loadWorkspaces() {
-        const res = await fetch("/workspaces");
-        const data = await res.json();
-        const select = document.getElementById("ws-select");
-        select.innerHTML = "";
-        data.workspaces.forEach(ws => {
-            const opt = document.createElement("option");
-            opt.value = ws;
-            opt.textContent = ws.toUpperCase();
-            if(ws === activeWorkspace) opt.selected = true;
-            select.appendChild(opt);
-        });
-        document.getElementById("current-ws-label").textContent = `Проект: ${activeWorkspace.toUpperCase()}`;
-        loadWorkspaceData();
+        try {
+            const res = await fetch("/workspaces");
+            const data = await res.json();
+            const select = document.getElementById("ws-select");
+            select.innerHTML = "";
+            data.workspaces.forEach(ws => {
+                const opt = document.createElement("option");
+                opt.value = ws;
+                opt.textContent = ws.toUpperCase();
+                if(ws === activeWorkspace) opt.selected = true;
+                select.appendChild(opt);
+            });
+            document.getElementById("current-ws-label").textContent = `Проект: ${activeWorkspace.toUpperCase()}`;
+            loadWorkspaceData();
+        } catch(e) {
+            console.error("Грешка при зареждане на workspaces", e);
+        }
     }
 
     async function loadWorkspaceData() {
-        const res = await fetch(`/workspace_data/${activeWorkspace}?subfolder=${encodeURIComponent(currentSubFolder)}`);
-        const data = await res.json();
-        
-        const chatContainer = document.getElementById("chat-history");
-        const isUserAtBottom = (chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight) < 80;
-        
-        if (isUserAtBottom || chatContainer.children.length === 0) {
-            chatContainer.innerHTML = "";
-            data.chat_history.forEach(msg => {
-                appendMessageToUI(msg.sender, msg.message, msg.monologue, msg.timestamp, false);
-            });
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
+        try {
+            const res = await fetch(`/workspace_data/${activeWorkspace}?subfolder=${encodeURIComponent(currentSubFolder)}`);
+            const data = await res.json();
+            
+            const chatContainer = document.getElementById("chat-history");
+            const isUserAtBottom = (chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight) < 80;
+            
+            if (isUserAtBottom || chatContainer.children.length === 0) {
+                chatContainer.innerHTML = "";
+                data.chat_history.forEach(msg => {
+                    appendMessageToUI(msg.sender, msg.message, msg.monologue, msg.timestamp, false);
+                });
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
 
-        // Обновяване на Хлебните трохи (Breadcrumbs)
-        const bc = document.getElementById("path-breadcrumbs");
-        bc.innerHTML = `<span>Path: /${currentSubFolder}</span>`;
-        if (currentSubFolder) {
-            bc.innerHTML += ` <button onclick="navigateUp()" style="padding: 2px 6px; font-size: 0.75rem; background:#30363d;">⬅️ Назад</button>`;
-        }
+            // Обновяване на Хлебните трохи (Breadcrumbs)
+            document.getElementById("path-text").textContent = `Path: /${currentSubFolder}`;
+            document.getElementById("btn-up").style.display = currentSubFolder ? "inline-block" : "none";
 
-        // Рендериране на Файлове и Папки
-        const fileList = document.getElementById("file-list");
-        fileList.innerHTML = "";
+            // Рендериране на Файлове и Папки
+            const fileList = document.getElementById("file-list");
+            fileList.innerHTML = "";
 
-        // Показваме подпапките първо
-        if (data.folders && data.folders.length > 0) {
-            data.folders.forEach(folder => {
-                fileList.innerHTML += `
-                    <div class="folder-item">
-                        <span onclick="enterFolder('${folder}')">📁 ${folder}</span>
-                        <button class="btn-icon" onclick="deleteFolder('${folder}')" title="Изтрий папката">❌</button>
-                    </div>
-                `;
-            });
-        }
-
-        // Показваме файловете
-        if (data.files && data.files.length > 0) {
-            data.files.forEach(f => {
-                fileList.innerHTML += `
-                    <div class="file-item">
-                        <span title="${f}">📄 ${f.length > 15 ? f.substring(0,12)+'...' : f}</span>
-                        <div class="file-actions">
-                            <a href="/download/${activeWorkspace}/${encodeURIComponent(currentSubFolder ? currentSubFolder + '/' + f : f)}" target="_blank">[Свали]</a>
-                            <button class="btn-icon" onclick="deleteFile('${f}')" title="Изтрий файла">❌</button>
+            // 1. Показване на папките
+            if (data.folders && data.folders.length > 0) {
+                data.folders.forEach(folder => {
+                    fileList.innerHTML += `
+                        <div class="folder-item">
+                            <div class="folder-name-btn" onclick="enterFolder('${folder}')">
+                                📁 <strong>${folder}</strong>
+                            </div>
+                            <button class="btn-icon" onclick="deleteFolder('${folder}')" title="Изтрий папката">❌</button>
                         </div>
-                    </div>
-                `;
-            });
-        }
+                    `;
+                });
+            }
 
-        if ((!data.folders || data.folders.length === 0) && (!data.files || data.files.length === 0)) {
-            fileList.innerHTML = `<span style="color:#8b949e; font-size:0.85rem;">Папката е празна.</span>`;
-        }
+            // 2. Показване на файловете
+            if (data.files && data.files.length > 0) {
+                data.files.forEach(f => {
+                    const filePath = currentSubFolder ? `${currentSubFolder}/${f}` : f;
+                    fileList.innerHTML += `
+                        <div class="file-item">
+                            <span title="${f}">📄 ${f.length > 18 ? f.substring(0,15)+'...' : f}</span>
+                            <div class="file-actions">
+                                <a href="/download/${activeWorkspace}/${encodeURIComponent(filePath)}" target="_blank">[Свали]</a>
+                                <button class="btn-icon" onclick="deleteFile('${f}')" title="Изтрий файла">❌</button>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
 
-        // Рендериране на Фактите
-        const factsList = document.getElementById("facts-list");
-        factsList.innerHTML = "";
-        if (!data.facts || data.facts.length === 0) {
-            factsList.innerHTML = `<span style="color:#8b949e; font-size:0.85rem;">Няма записани факти.</span>`;
-        } else {
-            data.facts.forEach(fact => {
-                factsList.innerHTML += `<div class="fact-item" style="font-size:0.85rem; padding:4px 0; border-bottom:1px solid #30363d; color:#8b949e;">• ${fact.content}</div>`;
-            });
+            if ((!data.folders || data.folders.length === 0) && (!data.files || data.files.length === 0)) {
+                fileList.innerHTML = `<span style="color:#8b949e; font-size:0.85rem;">Папката е празна.</span>`;
+            }
+
+            // 3. Рендериране на Фактите
+            const factsList = document.getElementById("facts-list");
+            factsList.innerHTML = "";
+            if (!data.facts || data.facts.length === 0) {
+                factsList.innerHTML = `<span style="color:#8b949e; font-size:0.85rem;">Няма записани факти.</span>`;
+            } else {
+                data.facts.forEach(fact => {
+                    factsList.innerHTML += `<div class="fact-item" style="font-size:0.85rem; padding:4px 0; border-bottom:1px solid #30363d; color:#8b949e;">• ${fact.content}</div>`;
+                });
+            }
+        } catch(e) {
+            console.error("Грешка при зареждане на данните за проект", e);
         }
     }
 
@@ -533,7 +549,7 @@
     }
 
     async function deleteFolder(folderName) {
-        if (confirm(`Сигурни ли сте, че искате да изтриете папката "${folderName}" и съдържанието ѝ?`)) {
+        if (confirm(`Сигурни ли сте, че искате да изтриете папката "${folderName}" и цялото ѝ съдържание?`)) {
             await fetch("/delete_folder", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
@@ -543,29 +559,34 @@
         }
     }
 
-    /* DRAG & DROP ФУНКЦИОНАЛНОСТ */
+    /* DRAG & DROP ПОДДРЪЖКА ЗА ЦЕЛИЯ ЕКРАН */
     const chatSection = document.getElementById("chat-section");
 
-    ['dragenter', 'dragover'].forEach(eventName => {
-        chatSection.addEventListener(eventName, (e) => {
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        document.body.addEventListener(eventName, (e) => {
             e.preventDefault();
             e.stopPropagation();
+        }, false);
+    });
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        document.body.addEventListener(eventName, () => {
             chatSection.classList.add('drag-over');
         }, false);
     });
 
     ['dragleave', 'drop'].forEach(eventName => {
         chatSection.addEventListener(eventName, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+            if (e.type === 'dragleave' && e.target !== document.body) return;
             chatSection.classList.remove('drag-over');
         }, false);
     });
 
-    chatSection.addEventListener('drop', (e) => {
+    document.body.addEventListener('drop', (e) => {
+        chatSection.classList.remove('drag-over');
         const dt = e.dataTransfer;
         const files = dt.files;
-        if (files.length > 0) {
+        if (files && files.length > 0) {
             handleUploadedFiles(files);
         }
     });
@@ -589,7 +610,7 @@
         loadWorkspaceData();
     }
 
-    /* ДРУГИ ОПЕРАЦИИ */
+    /* ДРУГИ ОПЕРАЦИИ В ЧАТА И БАЗАТА */
     function toggleFactsSection() {
         const container = document.getElementById("facts-container");
         const arrow = document.getElementById("facts-arrow");
@@ -679,6 +700,22 @@
             sendBtn.disabled = false;
             appendMessageToUI("niki", "❌ Възникна грешка при връзката със сървъра.");
         }
+    }
+
+    /* БУТОНИ ЗА N.I.K.I. V2.0 */
+    function runCuriosityScan() {
+        document.getElementById("user-input").value = "[СИСТЕМА]: Сканирай документацията за незавършени точки, неизвестни променливи или пропуски.";
+        sendMessage();
+    }
+
+    function generateTaskPlan() {
+        document.getElementById("user-input").value = "[СИСТЕМА]: Генерирай детайлен архитектурен план и стъпки за изпълнение за текущата задача.";
+        sendMessage();
+    }
+
+    function runSimulation() {
+        document.getElementById("user-input").value = "[СИСТЕМА]: Симулирай сценарий и тествай икономиката / механиката според наличните факти.";
+        sendMessage();
     }
 
     async function switchWorkspace() {
