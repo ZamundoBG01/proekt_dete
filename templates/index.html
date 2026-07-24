@@ -87,6 +87,7 @@
             display: flex;
             flex-direction: column;
             gap: 15px;
+            scroll-behavior: smooth;
         }
         .message {
             max-width: 85%;
@@ -106,6 +107,13 @@
             align-self: flex-start;
             background-color: var(--bot-msg-bg);
             border: 1px solid var(--border-color);
+        }
+        .message.thinking {
+            align-self: flex-start;
+            background-color: #161b22;
+            border: 1px dashed var(--accent-blue);
+            color: var(--accent-blue);
+            font-style: italic;
         }
         .msg-timestamp {
             font-size: 0.72rem;
@@ -273,6 +281,18 @@
             font-size: 0.85rem;
             color: var(--accent-blue);
         }
+        
+        /* Анимация за мислене */
+        .dots::after {
+            content: '';
+            animation: dotsAnim 1.5s infinite;
+        }
+        @keyframes dotsAnim {
+            0% { content: ''; }
+            33% { content: '.'; }
+            66% { content: '..'; }
+            100% { content: '...'; }
+        }
     </style>
 </head>
 <body>
@@ -300,7 +320,7 @@
                     <input type="checkbox" id="auto-run-toggle"> 🔄 Автоматичен режим (Auto-Run 24/7)
                 </label>
                 <div style="flex:1;"></div>
-                <button onclick="sendMessage()">Изпрати</button>
+                <button id="send-btn" onclick="sendMessage()">Изпрати</button>
             </div>
         </div>
     </div>
@@ -342,6 +362,8 @@
 <script>
     let activeWorkspace = "general";
     let factsExpanded = true;
+    let thinkingTimer = null;
+    let thinkingSeconds = 0;
 
     function toggleFullScreen() {
         const container = document.getElementById("main-container");
@@ -383,11 +405,20 @@
         const data = await res.json();
         
         const chatContainer = document.getElementById("chat-history");
-        chatContainer.innerHTML = "";
-        data.chat_history.forEach(msg => {
-            appendMessageToUI(msg.sender, msg.message, msg.monologue, msg.timestamp);
-        });
-        chatContainer.scrollTop = chatContainer.scrollHeight;
+        
+        // УМЕН СКРОЛ: Проверяваме дали потребителят е скролнал нагоре
+        const isUserAtBottom = (chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight) < 80;
+        
+        // Ако потребителят чете нагоре и N.I.K.I. не мисли в момента, НЕ пренаписваме HTML-а, за да не му пречим
+        if (!isUserAtBottom && document.getElementById("thinking-msg")) {
+            // Само ако има статус "мисли", поддържаме потока
+        } else if (isUserAtBottom) {
+            chatContainer.innerHTML = "";
+            data.chat_history.forEach(msg => {
+                appendMessageToUI(msg.sender, msg.message, msg.monologue, msg.timestamp, false);
+            });
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
 
         const fileList = document.getElementById("file-list");
         fileList.innerHTML = "";
@@ -426,7 +457,7 @@
         arrow.textContent = factsExpanded ? "▼" : "▲";
     }
 
-    function appendMessageToUI(sender, text, monologue, timestamp) {
+    function appendMessageToUI(sender, text, monologue, timestamp, autoScroll = true) {
         const chatContainer = document.getElementById("chat-history");
         const msgDiv = document.createElement("div");
         msgDiv.className = `message ${sender === 'user' ? 'user' : 'niki'}`;
@@ -458,11 +489,40 @@
         msgDiv.appendChild(timeDiv);
 
         chatContainer.appendChild(msgDiv);
+        
+        if (autoScroll) {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+    }
+
+    function showThinkingIndicator() {
+        const chatContainer = document.getElementById("chat-history");
+        const thinkingDiv = document.createElement("div");
+        thinkingDiv.id = "thinking-msg";
+        thinkingDiv.className = "message thinking";
+        
+        thinkingSeconds = 0;
+        thinkingDiv.innerHTML = `⚙️ N.I.K.I. генерира отговор<span class="dots"></span> (<span id="thinking-timer">0</span>s)`;
+        
+        chatContainer.appendChild(thinkingDiv);
         chatContainer.scrollTop = chatContainer.scrollHeight;
+
+        thinkingTimer = setInterval(() => {
+            thinkingSeconds++;
+            const timerEl = document.getElementById("thinking-timer");
+            if (timerEl) timerEl.textContent = thinkingSeconds;
+        }, 1000);
+    }
+
+    function removeThinkingIndicator() {
+        if (thinkingTimer) clearInterval(thinkingTimer);
+        const thinkingDiv = document.getElementById("thinking-msg");
+        if (thinkingDiv) thinkingDiv.remove();
     }
 
     async function sendMessage() {
         const input = document.getElementById("user-input");
+        const sendBtn = document.getElementById("send-btn");
         const text = input.value.trim();
         const autoRun = document.getElementById("auto-run-toggle").checked;
         if (!text) return;
@@ -471,19 +531,32 @@
         input.value = "";
         input.style.height = '110px';
         
-        const res = await fetch("/chat", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ message: text, workspace: activeWorkspace, auto_run: autoRun })
-        });
-        const data = await res.json();
-        
-        if (data.target_workspace) {
-            activeWorkspace = data.target_workspace;
-            loadWorkspaces();
-        } else {
-            appendMessageToUI("niki", data.reply, data.monologue);
-            loadWorkspaceData();
+        // Блокираме бутона и показваме таймера за мислене
+        sendBtn.disabled = true;
+        showThinkingIndicator();
+
+        try {
+            const res = await fetch("/chat", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ message: text, workspace: activeWorkspace, auto_run: autoRun })
+            });
+            const data = await res.json();
+            
+            removeThinkingIndicator();
+            sendBtn.disabled = false;
+
+            if (data.target_workspace) {
+                activeWorkspace = data.target_workspace;
+                loadWorkspaces();
+            } else {
+                appendMessageToUI("niki", data.reply, data.monologue);
+                loadWorkspaceData();
+            }
+        } catch (err) {
+            removeThinkingIndicator();
+            sendBtn.disabled = false;
+            appendMessageToUI("niki", "❌ Възникна грешка при връзката със сървъра.");
         }
     }
 
